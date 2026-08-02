@@ -83,6 +83,36 @@ receives:
 
 Leave a room with `{ "type": "lobby.leave", "roomId": "room_..." }`.
 
+## Battle state machine
+
+Fetch the current authoritative state:
+
+```json
+{ "type": "battle.state.get", "battleId": "battle_..." }
+```
+
+Submit a command for the current phase:
+
+```json
+{ "type": "battle.command", "battleId": "battle_...", "action": "accelerate" }
+{ "type": "battle.command", "battleId": "battle_...", "action": "fire", "detail": { "targetShipId": "e_0_..." } }
+```
+
+Phases and actions:
+
+- `speed`: `accelerate`, `decelerate`, `wait`
+- `move1` / `move2` / `move3`: `turn_left`, `turn_right`, `wait`
+- `gunnery`: `fire` with a `targetShipId`, or `wait`
+
+Force the phase forward when the opponent has not submitted yet:
+
+```json
+{ "type": "battle.advance", "battleId": "battle_..." }
+```
+
+Every state change is broadcast to the room as `battle.state` with the current
+turn, phase, ship positions, HP, and pending command summary.
+
 ## Gacha
 
 `POST /api/gacha/pull` requires an idempotency key so retries never double
