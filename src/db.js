@@ -69,5 +69,9 @@ export function createDatabase(dbPath = process.env.DATABASE_PATH || 'data/dread
   db.pragma('journal_mode = WAL');
   db.pragma('foreign_keys = ON');
   db.exec(schema);
+  const battleColumns = db.prepare('PRAGMA table_info(battles)').all();
+  if (!battleColumns.some((column) => column.name === 'state_json')) {
+    db.exec('ALTER TABLE battles ADD COLUMN state_json TEXT');
+  }
   return db;
 }

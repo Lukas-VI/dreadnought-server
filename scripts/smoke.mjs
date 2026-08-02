@@ -41,7 +41,9 @@ async function connect(token) {
     if (message.type === 'auth.ok') {
       resolveAuth();
     }
-    const index = waiters.findIndex((waiter) => waiter.type === message.type);
+    const index = waiters.findIndex((waiter) =>
+      waiter.predicate ? waiter.predicate(message) : waiter.type === message.type,
+    );
     if (index !== -1) {
       const [waiter] = waiters.splice(index, 1);
       waiter.resolve(message);
@@ -72,6 +74,29 @@ async function connect(token) {
         const timer = setTimeout(() => reject(new Error(`timeout waiting for ${type}`)), timeoutMs);
         waiters.push({
           type,
+          resolve: (message) => {
+            clearTimeout(timer);
+            resolve(message);
+          },
+          reject: (error) => {
+            clearTimeout(timer);
+            reject(error);
+          },
+        });
+      });
+    },
+    waitForMessage(predicate, timeoutMs = 5000) {
+      const existing = events.find(predicate);
+      if (existing) {
+        return Promise.resolve(existing);
+      }
+      return new Promise((resolve, reject) => {
+        const timer = setTimeout(
+          () => reject(new Error('timeout waiting for message')),
+          timeoutMs,
+        );
+        waiters.push({
+          predicate,
           resolve: (message) => {
             clearTimeout(timer);
             resolve(message);
@@ -140,6 +165,65 @@ await clientA.waitFor('room.state');
 clientB.send({ type: 'lobby.join', roomId: room.id });
 await clientB.waitFor('room.state');
 
+clientA.send({ type: 'battle.state.get', battleId: battle.id });
+const initial = await clientA.waitForMessage(
+  (message) => message.type === 'battle.state' && message.state.phase === 'speed',
+);
+if (initial.state.turn !== 1) {
+  throw new Error(`initial turn mismatch: ${initial.state.turn}`);
+}
+
+clientA.send({ type: 'battle.command', battleId: battle.id, action: 'accelerate' });
+clientB.send({ type: 'battle.command', battleId: battle.id, action: 'wait' });
+const afterSpeed = await clientB.waitForMessage(
+  (message) => message.type === 'battle.state' && message.state.phase === 'move1',
+);
+const firstShipId = afterSpeed.state.ships.find((ship) => ship.id.startsWith('p_0_')).id;
+const firstShipAfterSpeed = afterSpeed.state.ships.find((ship) => ship.id === firstShipId);
+if (firstShipAfterSpeed.speed !== 3) {
+  throw new Error(`accelerate failed: ${firstShipAfterSpeed.speed}`);
+}
+
+clientA.send({ type: 'battle.command', battleId: battle.id, action: 'turn_left' });
+clientB.send({ type: 'battle.command', battleId: battle.id, action: 'wait' });
+const afterMove1 = await clientA.waitForMessage(
+  (message) => message.type === 'battle.state' && message.state.phase === 'move2',
+);
+const firstShipAfterMove1 = afterMove1.state.ships.find((ship) => ship.id === firstShipId);
+if (firstShipAfterMove1.facing !== 5) {
+  throw new Error(`turn_left failed: ${firstShipAfterMove1.facing}`);
+}
+
+clientA.send({ type: 'battle.command', battleId: battle.id, action: 'wait' });
+clientB.send({ type: 'battle.command', battleId: battle.id, action: 'wait' });
+const afterMove2 = await clientB.waitForMessage(
+  (message) => message.type === 'battle.state' && message.state.phase === 'move3',
+);
+
+clientA.send({ type: 'battle.command', battleId: battle.id, action: 'wait' });
+clientB.send({ type: 'battle.command', battleId: battle.id, action: 'wait' });
+const afterMove3 = await clientA.waitForMessage(
+  (message) => message.type === 'battle.state' && message.state.phase === 'gunnery',
+);
+
+const enemyShipId = afterMove3.state.ships.find((ship) => ship.side === 1).id;
+clientA.send({
+  type: 'battle.command',
+  battleId: battle.id,
+  action: 'fire',
+  detail: { targetShipId: enemyShipId },
+});
+clientB.send({ type: 'battle.command', battleId: battle.id, action: 'wait' });
+const afterGunnery = await clientB.waitForMessage(
+  (message) =>
+    message.type === 'battle.state' &&
+    message.state.phase === 'speed' &&
+    message.state.turn === 2,
+);
+if (!afterGunnery.state.eventLog.some((entry) => entry.message.includes('炮击'))) {
+  throw new Error('gunnery event missing');
+}
+
 const broadcastPromise = clientB.waitFor('battle.rolled');
 clientA.send({
   type: 'battle.roll',
@@ -182,6 +266,11 @@ console.log(
       room: joined,
       battle,
       battleReplayId: battleAgain.id,
+      battleState: {
+        turn: afterGunnery.state.turn,
+        phase: afterGunnery.state.phase,
+        ships: afterGunnery.state.ships.length,
+      },
       wsRoll: {
         battleId: wsRoll.battleId,
         values: wsRoll.roll.values,

@@ -2,6 +2,7 @@ import http from 'node:http';
 
 import { createAccountService } from './account.js';
 import { createBattleService } from './battle.js';
+import { createBattleStateService } from './battleState.js';
 import { loadConfig } from './config.js';
 import { createDatabase } from './db.js';
 import { createGachaService } from './gacha.js';
@@ -18,6 +19,7 @@ const accountService = createAccountService({
 });
 const lobbyService = createLobbyService({ db, accountService });
 const battleService = createBattleService({ db, accountService, lobbyService });
+const battleStateService = createBattleStateService({ db, accountService, battleService });
 const gachaService = createGachaService({ db, accountService });
 
 function sendJson(res, status, body) {
@@ -137,6 +139,10 @@ async function handleRequest(req, res) {
       const room = lobbyService.get(bearerToken(req), body.roomId);
       hub.broadcast(room.id, { type: 'room.updated', room });
       hub.broadcast(room.id, { type: 'battle.started', battle });
+      hub.broadcast(room.id, {
+        type: 'battle.state',
+        state: battleStateService.getState(bearerToken(req), battle.id),
+      });
       sendJson(res, 201, battle);
       return;
     }
@@ -177,7 +183,13 @@ async function handleRequest(req, res) {
 }
 
 const server = http.createServer(handleRequest);
-const hub = createRealtimeHub({ server, accountService, lobbyService, battleService });
+const hub = createRealtimeHub({
+  server,
+  accountService,
+  lobbyService,
+  battleService,
+  battleStateService,
+});
 
 server.listen(port, '0.0.0.0', () => {
   console.log(`dreadnought-server listening on ${port}`);

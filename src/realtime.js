@@ -2,7 +2,13 @@ import { WebSocketServer } from 'ws';
 
 import { httpError } from './httpError.js';
 
-export function createRealtimeHub({ server, accountService, lobbyService, battleService }) {
+export function createRealtimeHub({
+  server,
+  accountService,
+  lobbyService,
+  battleService,
+  battleStateService,
+}) {
   const wss = new WebSocketServer({ server, path: '/ws' });
   const socketAuth = new Map();
   const socketRooms = new Map();
@@ -124,6 +130,24 @@ export function createRealtimeHub({ server, accountService, lobbyService, battle
             const roll = battleService.roll(auth.token, message);
             const battle = battleService.get(auth.token, message.battleId);
             broadcast(battle.roomId, { type: 'battle.rolled', battleId: battle.id, roll });
+            break;
+          }
+          case 'battle.state.get': {
+            const auth = requireAuth(ws);
+            const state = battleStateService.getState(auth.token, message.battleId);
+            send(ws, { type: 'battle.state', state });
+            break;
+          }
+          case 'battle.command': {
+            const auth = requireAuth(ws);
+            const state = battleStateService.command(auth.token, message);
+            broadcast(state.roomId, { type: 'battle.state', state });
+            break;
+          }
+          case 'battle.advance': {
+            const auth = requireAuth(ws);
+            const state = battleStateService.advance(auth.token, message);
+            broadcast(state.roomId, { type: 'battle.state', state });
             break;
           }
           default:
