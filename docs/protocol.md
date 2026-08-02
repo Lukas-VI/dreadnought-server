@@ -29,6 +29,7 @@ New players start with 1000 credits.
 | GET | `/api/lobby/rooms` | List rooms |
 | POST | `/api/lobby/create` | Create a room |
 | POST | `/api/lobby/join` | Join a room by `roomId` |
+| POST | `/api/lobby/leave` | Leave a room by `roomId`; empty rooms are deleted |
 | GET | `/api/lobby/rooms/:id` | Get one room |
 | POST | `/api/battle/start` | Start battle for a ready room |
 | POST | `/api/battle/roll` | Authoritative roll in a battle |

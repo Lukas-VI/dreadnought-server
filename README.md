@@ -40,10 +40,16 @@ sent as `battle.roll` and broadcast to every subscriber in the battle room.
 - `POST /api/auth/register` and `POST /api/auth/login`
 - `GET /api/me`
 - `POST /api/lobby/create`, `POST /api/lobby/join`, `GET /api/lobby/rooms`
+- `POST /api/lobby/leave`
 - `POST /api/battle/start`, `POST /api/battle/roll`
 - `GET /api/gacha/pools`, `POST /api/gacha/pull`, `GET /api/gacha/history`
 
 Full wire details live in [`docs/protocol.md`](docs/protocol.md).
+
+## Dev passwordless login
+
+Copy `.env.example` to `.env` and set `DEV_PASSWORDLESS_LOGIN=true` to let test
+accounts log in without a valid password. Turn it off before going live.
 
 ## Deployment
 
