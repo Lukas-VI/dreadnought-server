@@ -53,6 +53,28 @@ export function createRealtimeHub({ server, accountService, lobbyService, battle
     }
   }
 
+  function cleanupPlayerRooms(ws) {
+    const auth = socketAuth.get(ws);
+    const rooms = socketRooms.get(ws);
+    if (!auth || !rooms) {
+      return;
+    }
+
+    for (const roomId of rooms) {
+      try {
+        const room = lobbyService.leave(auth.token, roomId);
+        if (room) {
+          broadcast(room.id, { type: 'room.updated', room });
+        } else {
+          broadcast(roomId, { type: 'room.removed', roomId });
+        }
+      } catch {
+        // 房间可能已被删除，忽略清理竞态。
+      }
+      leaveRoom(ws, roomId);
+    }
+  }
+
   wss.on('connection', (ws) => {
     socketAuth.set(ws, null);
     socketRooms.set(ws, new Set());
@@ -81,6 +103,13 @@ export function createRealtimeHub({ server, accountService, lobbyService, battle
             break;
           }
           case 'lobby.leave': {
+            const auth = requireAuth(ws);
+            const room = lobbyService.leave(auth.token, message.roomId);
+            if (room) {
+              broadcast(room.id, { type: 'room.updated', room });
+            } else {
+              broadcast(message.roomId, { type: 'room.removed', roomId: message.roomId });
+            }
             leaveRoom(ws, message.roomId);
             send(ws, { type: 'lobby.left', roomId: message.roomId });
             break;
@@ -101,18 +130,7 @@ export function createRealtimeHub({ server, accountService, lobbyService, battle
     });
 
     ws.on('close', () => {
-      const rooms = socketRooms.get(ws);
-      if (rooms) {
-        for (const roomId of rooms) {
-          const members = roomSockets.get(roomId);
-          if (members) {
-            members.delete(ws);
-            if (members.size === 0) {
-              roomSockets.delete(roomId);
-            }
-          }
-        }
-      }
+      cleanupPlayerRooms(ws);
       socketRooms.delete(ws);
       socketAuth.delete(ws);
     });

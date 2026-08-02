@@ -2,6 +2,7 @@ import http from 'node:http';
 
 import { createAccountService } from './account.js';
 import { createBattleService } from './battle.js';
+import { loadConfig } from './config.js';
 import { createDatabase } from './db.js';
 import { createGachaService } from './gacha.js';
 import { createLobbyService } from './lobby.js';
@@ -9,7 +10,12 @@ import { createRealtimeHub } from './realtime.js';
 
 const port = Number(process.env.PORT || 3000);
 const db = createDatabase();
-const accountService = createAccountService({ db });
+const config = loadConfig();
+const accountService = createAccountService({
+  db,
+  passwordlessLogin:
+    (config.DEV_PASSWORDLESS_LOGIN ?? process.env.DEV_PASSWORDLESS_LOGIN) === 'true',
+});
 const lobbyService = createLobbyService({ db, accountService });
 const battleService = createBattleService({ db, accountService, lobbyService });
 const gachaService = createGachaService({ db, accountService });
@@ -104,6 +110,18 @@ async function handleRequest(req, res) {
       const room = lobbyService.join(bearerToken(req), body.roomId);
       hub.broadcast(room.id, { type: 'room.updated', room });
       sendJson(res, 200, room);
+      return;
+    }
+
+    if (req.method === 'POST' && path === '/api/lobby/leave') {
+      const body = await readJson(req);
+      const room = lobbyService.leave(bearerToken(req), body.roomId);
+      if (room) {
+        hub.broadcast(room.id, { type: 'room.updated', room });
+      } else {
+        hub.broadcast(body.roomId, { type: 'room.removed', roomId: body.roomId });
+      }
+      sendJson(res, 200, { ok: true, room });
       return;
     }
 

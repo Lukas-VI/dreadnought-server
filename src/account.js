@@ -27,7 +27,7 @@ function publicUser(user) {
   };
 }
 
-export function createAccountService({ db }) {
+export function createAccountService({ db, passwordlessLogin = false }) {
   const insertUser = db.prepare(
     'INSERT INTO users (id, username, password_hash, credits, created_at) VALUES (?, ?, ?, 1000, ?)',
   );
@@ -86,7 +86,10 @@ export function createAccountService({ db }) {
 
     login({ username, password }) {
       const user = selectUserByUsername.get(username);
-      if (!user || !verifyPassword(password, user.password_hash)) {
+      if (!user) {
+        throw httpError(401, 'bad_credentials');
+      }
+      if (!passwordlessLogin && !verifyPassword(password, user.password_hash)) {
         throw httpError(401, 'bad_credentials');
       }
       return issueSession(user);

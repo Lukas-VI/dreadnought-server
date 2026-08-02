@@ -10,6 +10,10 @@ export function createLobbyService({ db, accountService }) {
   );
   const insertPlayer = db.prepare('INSERT INTO room_players (room_id, player_id) VALUES (?, ?)');
   const updateStatus = db.prepare('UPDATE rooms SET status = ? WHERE id = ?');
+  const updateOwner = db.prepare('UPDATE rooms SET owner_id = ? WHERE id = ?');
+  const deletePlayer = db.prepare('DELETE FROM room_players WHERE room_id = ? AND player_id = ?');
+  const deleteBattles = db.prepare('DELETE FROM battles WHERE room_id = ?');
+  const deleteRoom = db.prepare('DELETE FROM rooms WHERE id = ?');
   const selectRoomIds = db.prepare('SELECT id FROM rooms ORDER BY created_at DESC');
 
   function loadRoom(roomId) {
@@ -68,6 +72,35 @@ export function createLobbyService({ db, accountService }) {
         updateStatus.run('ready', roomId);
       })();
       return publicRoom(loadRoom(roomId));
+    },
+
+    leave(token, roomId) {
+      const user = accountService.resolveToken(token);
+      const room = loadRoom(roomId);
+      if (!room) {
+        return null;
+      }
+      if (!room.players.includes(user.id)) {
+        return publicRoom(room);
+      }
+
+      db.transaction(() => {
+        deletePlayer.run(roomId, user.id);
+        const remaining = selectPlayers
+          .all(roomId)
+          .map((entry) => entry.player_id);
+        if (remaining.length === 0) {
+          deleteBattles.run(roomId);
+          deleteRoom.run(roomId);
+        } else {
+          if (room.ownerId === user.id) {
+            updateOwner.run(remaining[0], roomId);
+          }
+          updateStatus.run(remaining.length >= 2 ? 'ready' : 'waiting', roomId);
+        }
+      })();
+
+      return loadRoom(roomId);
     },
 
     get(token, roomId) {

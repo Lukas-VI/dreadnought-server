@@ -99,6 +99,16 @@ const b = await request('/api/auth/register', {
   body: { username: `smoke_b_${suffix}`, password: 'secret2' },
 });
 
+if (process.env.TEST_PASSWORDLESS === 'true') {
+  const passwordless = await request('/api/auth/login', {
+    method: 'POST',
+    body: { username: a.user.username, password: '' },
+  });
+  if (!passwordless.token) {
+    throw new Error('passwordless login failed');
+  }
+}
+
 const me = await request('/api/me', { token: a.token });
 const room = await request('/api/lobby/create', {
   method: 'POST',
@@ -114,6 +124,14 @@ const battle = await request('/api/battle/start', {
   token: a.token,
   body: { roomId: room.id },
 });
+const battleAgain = await request('/api/battle/start', {
+  method: 'POST',
+  token: a.token,
+  body: { roomId: room.id },
+});
+if (battleAgain.id !== battle.id) {
+  throw new Error(`battle id mismatch: ${battle.id} vs ${battleAgain.id}`);
+}
 
 const clientA = await connect(a.token);
 const clientB = await connect(b.token);
@@ -133,6 +151,12 @@ clientA.send({
 const wsRoll = await broadcastPromise;
 clientA.close();
 clientB.close();
+await new Promise((resolve) => setTimeout(resolve, 400));
+
+const roomsAfterClose = await request('/api/lobby/rooms', { token: a.token });
+if (roomsAfterClose.rooms.some((entry) => entry.id === room.id)) {
+  throw new Error(`zombie room after both clients closed: ${room.id}`);
+}
 
 const pools = await request('/api/gacha/pools', { token: a.token });
 const idempotencyKey = `smoke_${suffix}`;
@@ -157,11 +181,13 @@ console.log(
       me: me.username,
       room: joined,
       battle,
+      battleReplayId: battleAgain.id,
       wsRoll: {
         battleId: wsRoll.battleId,
         values: wsRoll.roll.values,
         sides: wsRoll.roll.sides,
       },
+      roomCleanedAfterClose: true,
       gacha: {
         pool: pools.pools[0].id,
         pullId: pull.id,

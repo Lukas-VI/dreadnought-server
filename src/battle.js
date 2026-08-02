@@ -7,6 +7,9 @@ export function createBattleService({ db, accountService, lobbyService }) {
     'INSERT INTO battles (id, room_id, players_json, turn, phase, status, started_at) VALUES (?, ?, ?, 0, ?, ?, ?)',
   );
   const selectBattle = db.prepare('SELECT * FROM battles WHERE id = ?');
+  const selectActiveBattle = db.prepare(
+    "SELECT * FROM battles WHERE room_id = ? AND status = 'active' ORDER BY started_at DESC LIMIT 1",
+  );
   const updateRoomStatus = db.prepare("UPDATE rooms SET status = 'battle' WHERE id = ?");
   const insertRoll = db.prepare(
     'INSERT INTO rolls (user_id, count, sides, values_json, reason, at) VALUES (?, ?, ?, ?, ?, ?)',
@@ -42,8 +45,15 @@ export function createBattleService({ db, accountService, lobbyService }) {
       if (!room.players.includes(user.id)) {
         throw httpError(403, 'not_in_room');
       }
+      if (room.ownerId !== user.id) {
+        throw httpError(403, 'not_room_owner');
+      }
       if (room.players.length < 2) {
         throw httpError(409, 'room_not_ready');
+      }
+      const existing = selectActiveBattle.get(roomId);
+      if (existing) {
+        return loadBattle(existing.id);
       }
       const battle = {
         id: `battle_${randomBytes(6).toString('hex')}`,
