@@ -76,6 +76,7 @@ export function createRealtimeHub({ server, accountService, lobbyService, battle
   }
 
   wss.on('connection', (ws) => {
+    console.log('[ws] connection', new Date().toISOString());
     socketAuth.set(ws, null);
     socketRooms.set(ws, new Set());
 
@@ -93,17 +94,20 @@ export function createRealtimeHub({ server, accountService, lobbyService, battle
           case 'auth': {
             const user = accountService.resolveToken(message.token);
             socketAuth.set(ws, { token: message.token, user });
+            console.log('[ws] auth', user.id, new Date().toISOString());
             send(ws, { type: 'auth.ok', user: accountService.getUser(message.token) });
             break;
           }
           case 'lobby.join': {
             const auth = requireAuth(ws);
             joinRoom(ws, message.roomId);
+            console.log('[ws] join', auth.user.id, message.roomId);
             send(ws, { type: 'room.state', room: lobbyService.get(auth.token, message.roomId) });
             break;
           }
           case 'lobby.leave': {
             const auth = requireAuth(ws);
+            console.log('[ws] leave', auth.user.id, message.roomId);
             const room = lobbyService.leave(auth.token, message.roomId);
             if (room) {
               broadcast(room.id, { type: 'room.updated', room });
@@ -129,7 +133,9 @@ export function createRealtimeHub({ server, accountService, lobbyService, battle
       }
     });
 
-    ws.on('close', () => {
+    ws.on('close', (code, reason) => {
+      const auth = socketAuth.get(ws);
+      console.log('[ws] close', auth?.user?.id, code, reason, new Date().toISOString());
       cleanupPlayerRooms(ws);
       socketRooms.delete(ws);
       socketAuth.delete(ws);
