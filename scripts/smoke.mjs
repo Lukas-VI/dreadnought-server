@@ -149,9 +149,19 @@ const smokeMap = {
   Version: 3,
   Orientation: 'ew',
   Terrain: { '0,0': 2, '1,0': 1 },
-  Generation: {},
+  Generation: {
+    '0,0': { SourceId: 2, Side: 0 },
+    '1,0': { SourceId: 2, Side: 0 },
+    '-2,0': { SourceId: 2, Side: 1 },
+    '-3,0': { SourceId: 2, Side: 1 },
+  },
   Special: {},
-  Ships: {},
+  Ships: {
+    '0,0': [{ ShipId: 'dreadnought', Direction: 0, Speed: 2 }],
+    '1,0': [{ ShipId: 'cruiser', Direction: 0, Speed: 2 }],
+    '-2,0': [{ ShipId: 'destroyer', Direction: 3, Speed: 2 }],
+    '-3,0': [{ ShipId: 'frigate', Direction: 3, Speed: 2 }],
+  },
 };
 const roomWithMap = await request(`/api/lobby/rooms/${room.id}/map`, {
   method: 'PUT',

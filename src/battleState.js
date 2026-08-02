@@ -39,11 +39,71 @@ function makeShip(side, index) {
   };
 }
 
+const DIRECTION_FACING = {
+  N: 0,
+  NE: 1,
+  SE: 2,
+  S: 3,
+  SW: 4,
+  NW: 5,
+};
+
+function parseDirection(value) {
+  if (typeof value === 'number') {
+    return value % 6;
+  }
+  if (typeof value === 'string') {
+    return DIRECTION_FACING[value.toUpperCase()] ?? 0;
+  }
+  return 0;
+}
+
+function loadMapShips(db, roomId) {
+  const row = db.prepare('SELECT map_json FROM rooms WHERE id = ?').get(roomId);
+  if (!row || !row.map_json) {
+    return null;
+  }
+  try {
+    const map = JSON.parse(row.map_json);
+    const generation = map.Generation || {};
+    const shipMap = map.Ships || {};
+    const ships = [];
+    for (const [key, gen] of Object.entries(generation)) {
+      const [q, r] = key.split(',').map(Number);
+      if (!Number.isInteger(q) || !Number.isInteger(r)) {
+        continue;
+      }
+      const side = gen.Side === 1 ? 1 : 0;
+      const spawns = shipMap[key] || [];
+      spawns.forEach((spawn, index) => {
+        const shipId = spawn.ShipId || 'frigate';
+        const facing = parseDirection(spawn.Direction);
+        const speed = clamp(Number(spawn.Speed || 0), 0, 5);
+        ships.push({
+          id: `${side === 0 ? 'p' : 'e'}_${index}_${key.replace(',', '_')}`,
+          name: `${side === 0 ? 'Player' : 'Enemy'} ${shipId} ${index + 1}`,
+          side,
+          hex: [q, r],
+          facing,
+          speed,
+          maxSpeed: 5,
+          hp: 10,
+          maxHp: 10,
+          status: 'intact',
+        });
+      });
+    }
+    return ships.length > 0 ? ships : null;
+  } catch {
+    return null;
+  }
+}
+
 function clamp(value, min, max) {
   return Math.max(min, Math.min(max, value));
 }
 
-function createState(battle) {
+function createState(battle, db) {
   const rollFirst = randomInt(1, 101);
   const rollSecond = randomInt(1, 101);
   const first = rollFirst >= rollSecond ? battle.players[0] : battle.players[1];
@@ -64,7 +124,7 @@ function createState(battle) {
       [battle.players[1]]: rollSecond,
     },
     commands: Object.fromEntries(battle.players.map((playerId) => [playerId, null])),
-    ships: [
+    ships: loadMapShips(db, battle.roomId) || [
       makeShip(0, 0),
       makeShip(0, 1),
       makeShip(1, 0),
@@ -101,7 +161,7 @@ export function createBattleStateService({ db, accountService, battleService }) 
     if (loaded) {
       return loaded;
     }
-    const state = createState(battle);
+    const state = createState(battle, db);
     states.set(battle.id, state);
     persist(state);
     return state;
