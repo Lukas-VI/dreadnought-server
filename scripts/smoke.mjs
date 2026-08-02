@@ -173,19 +173,44 @@ if (initial.state.turn !== 1) {
   throw new Error(`initial turn mismatch: ${initial.state.turn}`);
 }
 
-clientA.send({ type: 'battle.command', battleId: battle.id, action: 'accelerate' });
-clientB.send({ type: 'battle.command', battleId: battle.id, action: 'wait' });
+const firstId = initial.state.activePlayer;
+const secondId = firstId === a.user.id ? b.user.id : a.user.id;
+const firstSide = initial.state.players.indexOf(firstId);
+const clientsById = { [a.user.id]: clientA, [b.user.id]: clientB };
+const sendCommand = (playerId, action, detail) => {
+  clientsById[playerId].send({
+    type: 'battle.command',
+    battleId: battle.id,
+    action,
+    detail,
+  });
+};
+
+sendCommand(firstId, 'accelerate');
+await clientA.waitForMessage(
+  (message) =>
+    message.type === 'battle.state' &&
+    message.state.phase === 'speed' &&
+    message.state.activePlayer === secondId,
+);
+sendCommand(secondId, 'wait');
 const afterSpeed = await clientB.waitForMessage(
   (message) => message.type === 'battle.state' && message.state.phase === 'move1',
 );
-const firstShipId = afterSpeed.state.ships.find((ship) => ship.id.startsWith('p_0_')).id;
+const firstShipId = afterSpeed.state.ships.find((ship) => ship.side === firstSide).id;
 const firstShipAfterSpeed = afterSpeed.state.ships.find((ship) => ship.id === firstShipId);
 if (firstShipAfterSpeed.speed !== 3) {
   throw new Error(`accelerate failed: ${firstShipAfterSpeed.speed}`);
 }
 
-clientA.send({ type: 'battle.command', battleId: battle.id, action: 'turn_left' });
-clientB.send({ type: 'battle.command', battleId: battle.id, action: 'wait' });
+sendCommand(firstId, 'turn_left');
+await clientA.waitForMessage(
+  (message) =>
+    message.type === 'battle.state' &&
+    message.state.phase === 'move1' &&
+    message.state.activePlayer === secondId,
+);
+sendCommand(secondId, 'wait');
 const afterMove1 = await clientA.waitForMessage(
   (message) => message.type === 'battle.state' && message.state.phase === 'move2',
 );
@@ -194,26 +219,39 @@ if (firstShipAfterMove1.facing !== 5) {
   throw new Error(`turn_left failed: ${firstShipAfterMove1.facing}`);
 }
 
-clientA.send({ type: 'battle.command', battleId: battle.id, action: 'wait' });
-clientB.send({ type: 'battle.command', battleId: battle.id, action: 'wait' });
+sendCommand(firstId, 'wait');
+await clientA.waitForMessage(
+  (message) =>
+    message.type === 'battle.state' &&
+    message.state.phase === 'move2' &&
+    message.state.activePlayer === secondId,
+);
+sendCommand(secondId, 'wait');
 const afterMove2 = await clientB.waitForMessage(
   (message) => message.type === 'battle.state' && message.state.phase === 'move3',
 );
 
-clientA.send({ type: 'battle.command', battleId: battle.id, action: 'wait' });
-clientB.send({ type: 'battle.command', battleId: battle.id, action: 'wait' });
+sendCommand(firstId, 'wait');
+await clientA.waitForMessage(
+  (message) =>
+    message.type === 'battle.state' &&
+    message.state.phase === 'move3' &&
+    message.state.activePlayer === secondId,
+);
+sendCommand(secondId, 'wait');
 const afterMove3 = await clientA.waitForMessage(
   (message) => message.type === 'battle.state' && message.state.phase === 'gunnery',
 );
 
-const enemyShipId = afterMove3.state.ships.find((ship) => ship.side === 1).id;
-clientA.send({
-  type: 'battle.command',
-  battleId: battle.id,
-  action: 'fire',
-  detail: { targetShipId: enemyShipId },
-});
-clientB.send({ type: 'battle.command', battleId: battle.id, action: 'wait' });
+const enemyShipId = afterMove3.state.ships.find((ship) => ship.side !== firstSide).id;
+sendCommand(firstId, 'fire', { targetShipId: enemyShipId });
+await clientA.waitForMessage(
+  (message) =>
+    message.type === 'battle.state' &&
+    message.state.phase === 'gunnery' &&
+    message.state.activePlayer === secondId,
+);
+sendCommand(secondId, 'wait');
 const afterGunnery = await clientB.waitForMessage(
   (message) =>
     message.type === 'battle.state' &&
@@ -222,6 +260,9 @@ const afterGunnery = await clientB.waitForMessage(
 );
 if (!afterGunnery.state.eventLog.some((entry) => entry.message.includes('炮击'))) {
   throw new Error('gunnery event missing');
+}
+if (afterGunnery.state.turnOrder[0] !== secondId) {
+  throw new Error('initiative did not swap after turn end');
 }
 
 const broadcastPromise = clientB.waitFor('battle.rolled');

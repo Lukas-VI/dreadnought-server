@@ -44,6 +44,10 @@ function clamp(value, min, max) {
 }
 
 function createState(battle) {
+  const rollFirst = randomInt(1, 101);
+  const rollSecond = randomInt(1, 101);
+  const first = rollFirst >= rollSecond ? battle.players[0] : battle.players[1];
+  const second = battle.players.find((playerId) => playerId !== first);
   return {
     id: battle.id,
     roomId: battle.roomId,
@@ -53,6 +57,12 @@ function createState(battle) {
     status: 'active',
     winner: null,
     maxTurns: 18,
+    turnOrder: [first, second],
+    activePlayer: first,
+    initiative: {
+      [battle.players[0]]: rollFirst,
+      [battle.players[1]]: rollSecond,
+    },
     commands: Object.fromEntries(battle.players.map((playerId) => [playerId, null])),
     ships: [
       makeShip(0, 0),
@@ -107,6 +117,9 @@ export function createBattleStateService({ db, accountService, battleService }) 
       status: state.status,
       winner: state.winner,
       maxTurns: state.maxTurns,
+      turnOrder: state.turnOrder,
+      activePlayer: state.activePlayer,
+      initiative: state.initiative,
       commands: Object.fromEntries(
         Object.entries(state.commands).map(([playerId, command]) => [
           playerId,
@@ -167,6 +180,11 @@ export function createBattleStateService({ db, accountService, battleService }) 
       }
       state.turn += 1;
       state.phase = 'speed';
+      state.turnOrder = [state.turnOrder[1], state.turnOrder[0]];
+      state.eventLog.push({
+        at: new Date().toISOString(),
+        message: `第 ${state.turn} 回合，先手权交换`,
+      });
     } else {
       state.phase = NEXT_PHASE[state.phase];
       state.eventLog.push({
@@ -174,10 +192,11 @@ export function createBattleStateService({ db, accountService, battleService }) 
         message: `进入阶段 ${state.phase}`,
       });
     }
+    state.activePlayer = state.turnOrder[0];
   }
 
   function applyPhase(state) {
-    for (const playerId of state.players) {
+    for (const playerId of state.turnOrder) {
       const command = state.commands[playerId];
       const ships = state.ships.filter((ship) => ship.side === state.players.indexOf(playerId));
       for (const ship of ships) {
@@ -249,12 +268,16 @@ export function createBattleStateService({ db, accountService, battleService }) 
       if (state.commands[user.id]) {
         throw httpError(409, 'already_submitted');
       }
+      if (state.activePlayer !== user.id) {
+        throw httpError(409, 'not_your_turn');
+      }
       validateCommand(state, action, detail);
       state.commands[user.id] = { action, detail: detail || null };
       persist(state);
 
-      const submitted = state.players.filter((playerId) => state.commands[playerId]);
-      if (submitted.length === state.players.length) {
+      if (user.id === state.turnOrder[0]) {
+        state.activePlayer = state.turnOrder[1];
+      } else {
         settle(state);
       }
       persist(state);
@@ -271,7 +294,11 @@ export function createBattleStateService({ db, accountService, battleService }) 
           state.commands[playerId] = { action: 'wait', detail: null };
         }
       }
-      settle(state);
+      if (state.activePlayer === state.turnOrder[0]) {
+        state.activePlayer = state.turnOrder[1];
+      } else {
+        settle(state);
+      }
       persist(state);
       return publicState(state);
     },
