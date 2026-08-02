@@ -238,8 +238,10 @@ const afterMove1 = await clientA.waitForMessage(
   (message) => message.type === 'battle.state' && message.state.phase === 'move2',
 );
 const firstShipAfterMove1 = afterMove1.state.ships.find((ship) => ship.id === firstShipId);
-if (firstShipAfterMove1.facing !== 5) {
-  throw new Error(`turn_left failed: ${firstShipAfterMove1.facing}`);
+const initialFacing = firstSide === 0 ? 0 : 3;
+const expectedFacing = (initialFacing + 5) % 6;
+if (firstShipAfterMove1.facing !== expectedFacing) {
+  throw new Error(`turn_left failed: ${firstShipAfterMove1.facing} != ${expectedFacing}`);
 }
 
 sendCommand(firstId, 'wait');
