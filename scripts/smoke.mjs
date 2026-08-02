@@ -144,6 +144,29 @@ const joined = await request('/api/lobby/join', {
   token: b.token,
   body: { roomId: room.id },
 });
+const smokeMap = {
+  Name: 'smoke_map',
+  Version: 3,
+  Orientation: 'ew',
+  Terrain: { '0,0': 2, '1,0': 1 },
+  Generation: {},
+  Special: {},
+  Ships: {},
+};
+const roomWithMap = await request(`/api/lobby/rooms/${room.id}/map`, {
+  method: 'PUT',
+  token: a.token,
+  body: smokeMap,
+});
+if (!roomWithMap.hasMap) {
+  throw new Error('map upload failed');
+}
+const downloadedMap = await request(`/api/lobby/rooms/${room.id}/map`, {
+  token: b.token,
+});
+if (downloadedMap.map.Name !== 'smoke_map') {
+  throw new Error('map download failed');
+}
 const battle = await request('/api/battle/start', {
   method: 'POST',
   token: a.token,
@@ -305,6 +328,7 @@ console.log(
     {
       me: me.username,
       room: joined,
+      mapName: downloadedMap.map.Name,
       battle,
       battleReplayId: battleAgain.id,
       battleState: {

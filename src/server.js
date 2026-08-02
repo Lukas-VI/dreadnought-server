@@ -127,9 +127,29 @@ async function handleRequest(req, res) {
       return;
     }
 
-    if (req.method === 'GET' && path.startsWith('/api/lobby/rooms/')) {
+    if (req.method === 'GET' && path.startsWith('/api/lobby/rooms/') && !path.endsWith('/map')) {
       const roomId = decodeURIComponent(path.slice('/api/lobby/rooms/'.length));
       sendJson(res, 200, lobbyService.get(bearerToken(req), roomId));
+      return;
+    }
+
+    if (req.method === 'PUT' && path.startsWith('/api/lobby/rooms/') && path.endsWith('/map')) {
+      const roomId = decodeURIComponent(
+        path.slice('/api/lobby/rooms/'.length, path.length - '/map'.length),
+      );
+      const map = await readJson(req);
+      const room = lobbyService.setMap(bearerToken(req), roomId, JSON.stringify(map));
+      hub.broadcast(room.id, { type: 'room.updated', room });
+      sendJson(res, 200, room);
+      return;
+    }
+
+    if (req.method === 'GET' && path.startsWith('/api/lobby/rooms/') && path.endsWith('/map')) {
+      const roomId = decodeURIComponent(
+        path.slice('/api/lobby/rooms/'.length, path.length - '/map'.length),
+      );
+      const map = lobbyService.getMap(bearerToken(req), roomId);
+      sendJson(res, 200, { map });
       return;
     }
 

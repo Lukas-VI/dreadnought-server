@@ -11,6 +11,7 @@ export function createLobbyService({ db, accountService }) {
   const insertPlayer = db.prepare('INSERT INTO room_players (room_id, player_id) VALUES (?, ?)');
   const updateStatus = db.prepare('UPDATE rooms SET status = ? WHERE id = ?');
   const updateOwner = db.prepare('UPDATE rooms SET owner_id = ? WHERE id = ?');
+  const updateMap = db.prepare('UPDATE rooms SET map_json = ? WHERE id = ?');
   const deletePlayer = db.prepare('DELETE FROM room_players WHERE room_id = ? AND player_id = ?');
   const deleteBattles = db.prepare('DELETE FROM battles WHERE room_id = ?');
   const deleteRoom = db.prepare('DELETE FROM rooms WHERE id = ?');
@@ -28,6 +29,7 @@ export function createLobbyService({ db, accountService }) {
       players,
       status: row.status,
       createdAt: row.created_at,
+      hasMap: Boolean(row.map_json),
     };
   }
 
@@ -38,7 +40,14 @@ export function createLobbyService({ db, accountService }) {
       players: room.players,
       status: room.status,
       createdAt: room.createdAt,
+      hasMap: room.hasMap,
     };
+  }
+
+  function requireMember(room, userId) {
+    if (!room.players.includes(userId)) {
+      throw httpError(403, 'not_in_room');
+    }
   }
 
   return {
@@ -50,6 +59,40 @@ export function createLobbyService({ db, accountService }) {
         insertPlayer.run(roomId, user.id);
       })();
       return publicRoom(loadRoom(roomId));
+    },
+
+    setMap(token, roomId, mapJson) {
+      const user = accountService.resolveToken(token);
+      const room = loadRoom(roomId);
+      if (!room) {
+        throw httpError(404, 'room_not_found');
+      }
+      if (room.ownerId !== user.id) {
+        throw httpError(403, 'not_room_owner');
+      }
+      if (typeof mapJson !== 'string' || mapJson.length === 0) {
+        throw httpError(400, 'map_required');
+      }
+      try {
+        JSON.parse(mapJson);
+      } catch {
+        throw httpError(400, 'invalid_map_json');
+      }
+      updateMap.run(mapJson, roomId);
+      return publicRoom(loadRoom(roomId));
+    },
+
+    getMap(token, roomId) {
+      const user = accountService.resolveToken(token);
+      const room = loadRoom(roomId);
+      if (!room) {
+        throw httpError(404, 'room_not_found');
+      }
+      requireMember(room, user.id);
+      if (!room.hasMap) {
+        return null;
+      }
+      return JSON.parse(selectRoom.get(roomId).map_json);
     },
 
     join(token, roomId) {

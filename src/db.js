@@ -73,5 +73,9 @@ export function createDatabase(dbPath = process.env.DATABASE_PATH || 'data/dread
   if (!battleColumns.some((column) => column.name === 'state_json')) {
     db.exec('ALTER TABLE battles ADD COLUMN state_json TEXT');
   }
+  const roomColumns = db.prepare('PRAGMA table_info(rooms)').all();
+  if (!roomColumns.some((column) => column.name === 'map_json')) {
+    db.exec('ALTER TABLE rooms ADD COLUMN map_json TEXT');
+  }
   return db;
 }
