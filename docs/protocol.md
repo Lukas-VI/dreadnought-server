@@ -111,7 +111,10 @@ Force the phase forward when the opponent has not submitted yet:
 ```
 
 Every state change is broadcast to the room as `battle.state` with the current
-turn, phase, ship positions, HP, and pending command summary.
+turn, phase, ship positions, HP, and pending command summary. The state also
+includes `turnOrder` (first player acts first in the current turn) and
+`activePlayer` (whose command is currently accepted). Initiative is rolled once
+at battle start, then the first-player order swaps at each turn end.
 
 ## Gacha
 
