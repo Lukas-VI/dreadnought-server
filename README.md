@@ -43,6 +43,8 @@ sent as `battle.roll` and broadcast to every subscriber in the battle room.
 - `POST /api/battle/start`, `POST /api/battle/roll`
 - `GET /api/gacha/pools`, `POST /api/gacha/pull`, `GET /api/gacha/history`
 
+Full wire details live in [`docs/protocol.md`](docs/protocol.md).
+
 ## Deployment
 
 The VM at `192.168.31.135` runs the server with PM2 under the name
