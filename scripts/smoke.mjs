@@ -200,23 +200,26 @@ const firstId = initial.state.activePlayer;
 const secondId = firstId === a.user.id ? b.user.id : a.user.id;
 const firstSide = initial.state.players.indexOf(firstId);
 const clientsById = { [a.user.id]: clientA, [b.user.id]: clientB };
-const sendCommand = (playerId, action, detail) => {
+const sideShips = (state, side, action, detail) =>
+  state.ships
+    .filter((ship) => ship.side === side)
+    .map((ship) => ({ id: ship.id, action, detail }));
+const sendShips = (playerId, ships) => {
   clientsById[playerId].send({
     type: 'battle.command',
     battleId: battle.id,
-    action,
-    detail,
+    ships,
   });
 };
 
-sendCommand(firstId, 'accelerate');
+sendShips(firstId, sideShips(initial.state, firstSide, 'accelerate'));
 await clientA.waitForMessage(
   (message) =>
     message.type === 'battle.state' &&
     message.state.phase === 'speed' &&
     message.state.activePlayer === secondId,
 );
-sendCommand(secondId, 'wait');
+sendShips(secondId, sideShips(initial.state, 1 - firstSide, 'wait'));
 const afterSpeed = await clientB.waitForMessage(
   (message) => message.type === 'battle.state' && message.state.phase === 'move1',
 );
@@ -226,14 +229,14 @@ if (firstShipAfterSpeed.speed !== 3) {
   throw new Error(`accelerate failed: ${firstShipAfterSpeed.speed}`);
 }
 
-sendCommand(firstId, 'turn_left');
+sendShips(firstId, sideShips(afterSpeed.state, firstSide, 'turn_left'));
 await clientA.waitForMessage(
   (message) =>
     message.type === 'battle.state' &&
     message.state.phase === 'move1' &&
     message.state.activePlayer === secondId,
 );
-sendCommand(secondId, 'wait');
+sendShips(secondId, sideShips(afterSpeed.state, 1 - firstSide, 'wait'));
 const afterMove1 = await clientA.waitForMessage(
   (message) => message.type === 'battle.state' && message.state.phase === 'move2',
 );
@@ -244,39 +247,42 @@ if (firstShipAfterMove1.facing !== expectedFacing) {
   throw new Error(`turn_left failed: ${firstShipAfterMove1.facing} != ${expectedFacing}`);
 }
 
-sendCommand(firstId, 'wait');
+sendShips(firstId, sideShips(afterMove1.state, firstSide, 'wait'));
 await clientA.waitForMessage(
   (message) =>
     message.type === 'battle.state' &&
     message.state.phase === 'move2' &&
     message.state.activePlayer === secondId,
 );
-sendCommand(secondId, 'wait');
+sendShips(secondId, sideShips(afterMove1.state, 1 - firstSide, 'wait'));
 const afterMove2 = await clientB.waitForMessage(
   (message) => message.type === 'battle.state' && message.state.phase === 'move3',
 );
 
-sendCommand(firstId, 'wait');
+sendShips(firstId, sideShips(afterMove2.state, firstSide, 'wait'));
 await clientA.waitForMessage(
   (message) =>
     message.type === 'battle.state' &&
     message.state.phase === 'move3' &&
     message.state.activePlayer === secondId,
 );
-sendCommand(secondId, 'wait');
+sendShips(secondId, sideShips(afterMove2.state, 1 - firstSide, 'wait'));
 const afterMove3 = await clientA.waitForMessage(
   (message) => message.type === 'battle.state' && message.state.phase === 'gunnery',
 );
 
 const enemyShipId = afterMove3.state.ships.find((ship) => ship.side !== firstSide).id;
-sendCommand(firstId, 'fire', { targetShipId: enemyShipId });
+sendShips(
+  firstId,
+  sideShips(afterMove3.state, firstSide, 'fire', { targetShipId: enemyShipId }),
+);
 await clientA.waitForMessage(
   (message) =>
     message.type === 'battle.state' &&
     message.state.phase === 'gunnery' &&
     message.state.activePlayer === secondId,
 );
-sendCommand(secondId, 'wait');
+sendShips(secondId, sideShips(afterMove3.state, 1 - firstSide, 'wait'));
 const afterGunnery = await clientB.waitForMessage(
   (message) =>
     message.type === 'battle.state' &&

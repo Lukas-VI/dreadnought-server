@@ -123,7 +123,9 @@ export function createBattleStateService({ db, accountService, battleService }) 
       commands: Object.fromEntries(
         Object.entries(state.commands).map(([playerId, command]) => [
           playerId,
-          command ? command.action : null,
+          command
+            ? { submitted: true, shipCount: (command.ships || []).length }
+            : { submitted: false, shipCount: 0 },
         ]),
       ),
       ships: state.ships,
@@ -141,7 +143,7 @@ export function createBattleStateService({ db, accountService, battleService }) 
     return { user, state };
   }
 
-  function validateCommand(state, action, detail) {
+  function validateCommand(state, playerSide, command) {
     const allowed = {
       speed: ['accelerate', 'decelerate', 'wait'],
       move1: ['turn_left', 'turn_right', 'wait'],
@@ -149,14 +151,20 @@ export function createBattleStateService({ db, accountService, battleService }) 
       move3: ['turn_left', 'turn_right', 'wait'],
       gunnery: ['fire', 'wait'],
     };
-    if (!allowed[state.phase] || !allowed[state.phase].includes(action)) {
-      throw httpError(400, 'invalid_command_for_phase');
-    }
-    if (action === 'fire') {
-      const targetId = detail && detail.targetShipId;
-      const target = state.ships.find((ship) => ship.id === targetId);
-      if (!target) {
-        throw httpError(400, 'invalid_target');
+    for (const entry of command.ships || []) {
+      if (!allowed[state.phase] || !allowed[state.phase].includes(entry.action)) {
+        throw httpError(400, 'invalid_command_for_phase');
+      }
+      const ship = state.ships.find((candidate) => candidate.id === entry.id);
+      if (!ship || ship.side !== playerSide) {
+        throw httpError(400, 'invalid_ship');
+      }
+      if (entry.action === 'fire') {
+        const targetId = entry.detail && entry.detail.targetShipId;
+        const target = state.ships.find((candidate) => candidate.id === targetId);
+        if (!target || target.side === playerSide) {
+          throw httpError(400, 'invalid_target');
+        }
       }
     }
   }
@@ -198,12 +206,16 @@ export function createBattleStateService({ db, accountService, battleService }) 
   function applyPhase(state) {
     for (const playerId of state.turnOrder) {
       const command = state.commands[playerId];
+      const playerSide = state.players.indexOf(playerId);
       const ships = state.ships.filter((ship) => ship.side === state.players.indexOf(playerId));
       for (const ship of ships) {
+        const entry = (command.ships || []).find((candidate) => candidate.id === ship.id)
+          || { action: 'wait', detail: null };
+        const action = entry.action || 'wait';
         if (state.phase === 'speed') {
-          const delta = command.action === 'accelerate'
+          const delta = action === 'accelerate'
             ? 1
-            : command.action === 'decelerate'
+            : action === 'decelerate'
               ? -1
               : 0;
           ship.speed = clamp(ship.speed + delta, 0, ship.maxSpeed);
@@ -211,17 +223,19 @@ export function createBattleStateService({ db, accountService, battleService }) 
         }
 
         if (state.phase.startsWith('move')) {
-          if (command.action === 'turn_left') {
+          if (action === 'turn_left') {
             ship.facing = (ship.facing + 5) % 6;
-          } else if (command.action === 'turn_right') {
+          } else if (action === 'turn_right') {
             ship.facing = (ship.facing + 1) % 6;
           }
           ship.hex = addHex(ship.hex, FACING_VECTORS[ship.facing]);
           continue;
         }
 
-        if (state.phase === 'gunnery' && command.action === 'fire') {
-          const target = state.ships.find((entry) => entry.id === command.detail.targetShipId);
+        if (state.phase === 'gunnery' && action === 'fire') {
+          const target = state.ships.find(
+            (candidate) => candidate.id === entry.detail.targetShipId,
+          );
           if (target && target.side !== ship.side) {
             const roll = randomInt(1, 101);
             const hit = roll <= 70;
@@ -260,7 +274,7 @@ export function createBattleStateService({ db, accountService, battleService }) 
       return publicState(state);
     },
 
-    command(token, { battleId, action, detail }) {
+    command(token, { battleId, action, detail, ships }) {
       const { user, state } = resolveBattle(token, battleId);
       if (state.status !== 'active') {
         throw httpError(409, 'battle_not_active');
@@ -271,8 +285,19 @@ export function createBattleStateService({ db, accountService, battleService }) 
       if (state.activePlayer !== user.id) {
         throw httpError(409, 'not_your_turn');
       }
-      validateCommand(state, action, detail);
-      state.commands[user.id] = { action, detail: detail || null };
+      const playerSide = state.players.indexOf(user.id);
+      let shipCommands;
+      if (Array.isArray(ships) && ships.length > 0) {
+        shipCommands = ships;
+      } else if (action) {
+        shipCommands = state.ships
+          .filter((ship) => ship.side === playerSide)
+          .map((ship) => ({ id: ship.id, action, detail: detail || null }));
+      } else {
+        shipCommands = [];
+      }
+      validateCommand(state, playerSide, { ships: shipCommands });
+      state.commands[user.id] = { ships: shipCommands };
       persist(state);
 
       if (user.id === state.turnOrder[0]) {
@@ -291,7 +316,7 @@ export function createBattleStateService({ db, accountService, battleService }) 
       }
       for (const playerId of state.players) {
         if (!state.commands[playerId]) {
-          state.commands[playerId] = { action: 'wait', detail: null };
+          state.commands[playerId] = { ships: [] };
         }
       }
       if (state.activePlayer === state.turnOrder[0]) {
