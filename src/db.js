@@ -1,0 +1,73 @@
+import { mkdirSync } from 'node:fs';
+import path from 'node:path';
+
+import Database from 'better-sqlite3';
+
+const schema = `
+CREATE TABLE IF NOT EXISTS users (
+  id TEXT PRIMARY KEY,
+  username TEXT NOT NULL UNIQUE,
+  password_hash TEXT NOT NULL,
+  credits INTEGER NOT NULL DEFAULT 1000,
+  created_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS sessions (
+  token TEXT PRIMARY KEY,
+  user_id TEXT NOT NULL REFERENCES users(id),
+  created_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS rooms (
+  id TEXT PRIMARY KEY,
+  owner_id TEXT NOT NULL REFERENCES users(id),
+  status TEXT NOT NULL DEFAULT 'waiting',
+  created_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS room_players (
+  room_id TEXT NOT NULL REFERENCES rooms(id),
+  player_id TEXT NOT NULL REFERENCES users(id),
+  PRIMARY KEY (room_id, player_id)
+);
+
+CREATE TABLE IF NOT EXISTS battles (
+  id TEXT PRIMARY KEY,
+  room_id TEXT NOT NULL REFERENCES rooms(id),
+  players_json TEXT NOT NULL,
+  turn INTEGER NOT NULL DEFAULT 0,
+  phase TEXT NOT NULL DEFAULT 'setup',
+  status TEXT NOT NULL DEFAULT 'active',
+  started_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS rolls (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  user_id TEXT NOT NULL REFERENCES users(id),
+  count INTEGER NOT NULL,
+  sides INTEGER NOT NULL,
+  values_json TEXT NOT NULL,
+  reason TEXT NOT NULL,
+  at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS gacha_pulls (
+  id TEXT PRIMARY KEY,
+  user_id TEXT NOT NULL REFERENCES users(id),
+  pool TEXT NOT NULL,
+  count INTEGER NOT NULL,
+  cost INTEGER NOT NULL,
+  result_json TEXT NOT NULL,
+  idempotency_key TEXT NOT NULL UNIQUE,
+  created_at TEXT NOT NULL
+);
+`;
+
+export function createDatabase(dbPath = process.env.DATABASE_PATH || 'data/dreadnought.db') {
+  mkdirSync(path.dirname(path.resolve(dbPath)), { recursive: true });
+  const db = new Database(dbPath);
+  db.pragma('journal_mode = WAL');
+  db.pragma('foreign_keys = ON');
+  db.exec(schema);
+  return db;
+}

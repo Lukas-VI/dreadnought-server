@@ -1,3 +1,5 @@
+import WebSocket from 'ws';
+
 const base = process.env.BASE_URL || 'http://127.0.0.1:3000';
 
 async function request(path, { method = 'GET', token, body } = {}) {
@@ -24,6 +26,69 @@ async function request(path, { method = 'GET', token, body } = {}) {
   return payload;
 }
 
+async function connect(token) {
+  const ws = new WebSocket(base.replace(/^http/, 'ws') + '/ws');
+  const events = [];
+  const waiters = [];
+  let resolveAuth;
+  const authDone = new Promise((resolve) => {
+    resolveAuth = resolve;
+  });
+
+  ws.on('message', (raw) => {
+    const message = JSON.parse(raw.toString());
+    events.push(message);
+    if (message.type === 'auth.ok') {
+      resolveAuth();
+    }
+    const index = waiters.findIndex((waiter) => waiter.type === message.type);
+    if (index !== -1) {
+      const [waiter] = waiters.splice(index, 1);
+      waiter.resolve(message);
+    }
+  });
+
+  await new Promise((resolveOpen, rejectOpen) => {
+    ws.once('open', () => {
+      ws.send(JSON.stringify({ type: 'auth', token }));
+      resolveOpen();
+    });
+    ws.once('error', rejectOpen);
+  });
+  await authDone;
+
+  return {
+    ws,
+    events,
+    send(message) {
+      ws.send(JSON.stringify(message));
+    },
+    waitFor(type, timeoutMs = 5000) {
+      const existing = events.find((message) => message.type === type);
+      if (existing) {
+        return Promise.resolve(existing);
+      }
+      return new Promise((resolve, reject) => {
+        const timer = setTimeout(() => reject(new Error(`timeout waiting for ${type}`)), timeoutMs);
+        waiters.push({
+          type,
+          resolve: (message) => {
+            clearTimeout(timer);
+            resolve(message);
+          },
+          reject: (error) => {
+            clearTimeout(timer);
+            reject(error);
+          },
+        });
+      });
+    },
+    close() {
+      ws.close();
+    },
+  };
+}
+
 const suffix = Date.now().toString(36);
 const a = await request('/api/auth/register', {
   method: 'POST',
@@ -33,6 +98,8 @@ const b = await request('/api/auth/register', {
   method: 'POST',
   body: { username: `smoke_b_${suffix}`, password: 'secret2' },
 });
+
+const me = await request('/api/me', { token: a.token });
 const room = await request('/api/lobby/create', {
   method: 'POST',
   token: a.token,
@@ -47,20 +114,62 @@ const battle = await request('/api/battle/start', {
   token: a.token,
   body: { roomId: room.id },
 });
-const roll = await request('/api/battle/roll', {
+
+const clientA = await connect(a.token);
+const clientB = await connect(b.token);
+clientA.send({ type: 'lobby.join', roomId: room.id });
+await clientA.waitFor('room.state');
+clientB.send({ type: 'lobby.join', roomId: room.id });
+await clientB.waitFor('room.state');
+
+const broadcastPromise = clientB.waitFor('battle.rolled');
+clientA.send({
+  type: 'battle.roll',
+  battleId: battle.id,
+  count: 3,
+  sides: 100,
+  reason: 'ws-smoke',
+});
+const wsRoll = await broadcastPromise;
+clientA.close();
+clientB.close();
+
+const pools = await request('/api/gacha/pools', { token: a.token });
+const idempotencyKey = `smoke_${suffix}`;
+const pull = await request('/api/gacha/pull', {
   method: 'POST',
   token: a.token,
-  body: { count: 3, sides: 100, reason: 'smoke' },
+  body: { pool: 'naval', count: 2, idempotencyKey },
 });
-const rolls = await request('/api/battle/rolls', { token: a.token });
+const replay = await request('/api/gacha/pull', {
+  method: 'POST',
+  token: a.token,
+  body: { pool: 'naval', count: 2, idempotencyKey },
+});
+if (replay.id !== pull.id || replay.replay !== true) {
+  throw new Error('gacha idempotency replay failed');
+}
+const history = await request('/api/gacha/history', { token: a.token });
 
 console.log(
   JSON.stringify(
     {
+      me: me.username,
       room: joined,
       battle,
-      roll,
-      rollLogLength: rolls.rolls.length,
+      wsRoll: {
+        battleId: wsRoll.battleId,
+        values: wsRoll.roll.values,
+        sides: wsRoll.roll.sides,
+      },
+      gacha: {
+        pool: pools.pools[0].id,
+        pullId: pull.id,
+        items: pull.items.map((item) => item.id),
+        creditsLeft: pull.creditsLeft,
+        replayId: replay.id,
+        historyCount: history.pulls.length,
+      },
     },
     null,
     2,
