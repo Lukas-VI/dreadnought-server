@@ -30,6 +30,8 @@ New players start with 1000 credits.
 | POST | `/api/lobby/create` | Create a room |
 | POST | `/api/lobby/join` | Join a room by `roomId` |
 | POST | `/api/lobby/leave` | Leave a room by `roomId`; empty rooms are deleted |
+| PUT | `/api/lobby/rooms/:id/map` | Host uploads the battle map JSON |
+| GET | `/api/lobby/rooms/:id/map` | Room member downloads the cached map |
 | GET | `/api/lobby/rooms/:id` | Get one room |
 | POST | `/api/battle/start` | Start battle for a ready room |
 | POST | `/api/battle/roll` | Authoritative roll in a battle |
@@ -67,6 +69,10 @@ subscribers:
 { "type": "room.state", "room": { "id": "room_...", "players": ["u_..."], "status": "ready" } }
 { "type": "room.updated", "room": { ... } }
 ```
+
+Rooms carry a `hasMap` flag in their public state. The host uploads the selected
+editor map with `PUT /api/lobby/rooms/:id/map`; the other player downloads the
+same JSON with `GET /api/lobby/rooms/:id/map` before the battle starts.
 
 4. Roll during a battle:
 
