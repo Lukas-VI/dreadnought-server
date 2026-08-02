@@ -100,9 +100,16 @@ Fetch the current authoritative state:
 Submit a command for the current phase:
 
 ```json
-{ "type": "battle.command", "battleId": "battle_...", "action": "accelerate" }
-{ "type": "battle.command", "battleId": "battle_...", "action": "fire", "detail": { "targetShipId": "e_0_..." } }
+{ "type": "battle.command", "battleId": "battle_...", "ships": [
+  { "id": "p_0_...", "action": "accelerate" }
+] }
+{ "type": "battle.command", "battleId": "battle_...", "ships": [
+  { "id": "p_0_...", "action": "fire", "detail": { "targetShipId": "e_0_..." } }
+] }
 ```
+
+Each entry is one ship command. A legacy `action` field is still accepted and is
+applied to every ship on the submitting side.
 
 Phases and actions:
 
