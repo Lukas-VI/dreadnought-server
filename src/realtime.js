@@ -120,6 +120,7 @@ export function createRealtimeHub({ server, accountService, lobbyService, battle
           }
           case 'battle.roll': {
             const auth = requireAuth(ws);
+            console.log('[ws] roll', auth.user.id, message.battleId, new Date().toISOString());
             const roll = battleService.roll(auth.token, message);
             const battle = battleService.get(auth.token, message.battleId);
             broadcast(battle.roomId, { type: 'battle.rolled', battleId: battle.id, roll });
