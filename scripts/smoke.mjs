@@ -222,6 +222,10 @@ if (typeof initial.state.playerCP !== 'number' || typeof initial.state.enemyCP !
 if (typeof initial.state.timerTotal !== 'number' || initial.state.timerTotal <= 0) {
   throw new Error('battle state missing authoritative timer');
 }
+if (typeof initial.state.timerEndAt !== 'number' || initial.state.timerEndAt <= 0 ||
+  typeof initial.state.timerStartAt !== 'number' || initial.state.timerStartAt <= 0) {
+  throw new Error('battle state missing timer timestamps');
+}
 
 const firstId = initial.state.activePlayer;
 const secondId = firstId === a.user.id ? b.user.id : a.user.id;
