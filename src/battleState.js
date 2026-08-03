@@ -89,6 +89,7 @@ function makeShip(side, index) {
     formationIndex: -1,
     stackIndex: 0,
     stackTotal: 1,
+    lastPath: null,
     side,
     hex: side === 0 ? [2 - index, 0] : [-2 + index, 0],
     facing: side === 0 ? 0 : 3,
@@ -154,6 +155,7 @@ function loadMapShips(db, roomId) {
           formationIndex: -1,
           stackIndex: 0,
           stackTotal: 1,
+          lastPath: null,
           side,
           hex: [q, r],
           facing,
@@ -712,16 +714,19 @@ export function createBattleStateService({ db, accountService, battleService }) 
           } else if (action === 'turn_right') {
             facing = (facing + 1) % 6;
           }
-          const steps = moveForPhase(ship.speed, phaseNum, oddTurn);
-          const vector = FACING_VECTORS[facing];
-          moves.push({
-            ship,
-            facing,
-            target: [
-              ship.hex[0] + vector[0] * steps,
-              ship.hex[1] + vector[1] * steps,
-            ],
-          });
+            const steps = moveForPhase(ship.speed, phaseNum, oddTurn);
+            const vector = FACING_VECTORS[facing];
+            const path = [[ship.hex[0], ship.hex[1]]];
+            for (let step = 0; step < steps; step++) {
+              const last = path[path.length - 1];
+              path.push([last[0] + vector[0], last[1] + vector[1]]);
+            }
+            moves.push({
+              ship,
+              facing,
+              target: path[path.length - 1],
+              path,
+            });
           continue;
         }
 
@@ -757,22 +762,32 @@ export function createBattleStateService({ db, accountService, battleService }) 
       }
       formationGroups.get(leadId).push(move);
     }
-    for (const group of formationGroups.values()) {
-      group.sort((a, b) => a.ship.formationIndex - b.ship.formationIndex);
-      for (let i = 1; i < group.length; i++) {
-        const aheadOld = oldHex.get(group[i - 1].ship.id);
-        const follower = group[i];
-        if (!aheadOld) {
-          continue;
+      for (const group of formationGroups.values()) {
+        group.sort((a, b) => a.ship.formationIndex - b.ship.formationIndex);
+        const shipById = new Map(state.ships.map((ship) => [ship.id, ship]));
+        for (let i = 1; i < group.length; i++) {
+          const follower = group[i];
+          const aheadShip = shipById.get(group[i - 1].ship.id);
+          const aheadPath = aheadShip &&
+            Array.isArray(aheadShip.lastPath) &&
+            aheadShip.lastPath.length > 1
+            ? aheadShip.lastPath
+            : (aheadShip ? [oldHex.get(aheadShip.id)] : null);
+          if (!aheadPath) {
+            continue;
+          }
+          follower.path = aheadPath.map((hex) => [...hex]);
+          follower.target = follower.path[follower.path.length - 1];
+          if (follower.path.length >= 2) {
+            const last = follower.path[follower.path.length - 1];
+            const previous = follower.path[follower.path.length - 2];
+            follower.facing = facingFromOffset(
+              last[0] - previous[0],
+              last[1] - previous[1],
+            );
+          }
         }
-        follower.target = [...aheadOld];
-        const from = oldHex.get(follower.ship.id);
-        follower.facing = facingFromOffset(
-          follower.target[0] - from[0],
-          follower.target[1] - from[1],
-        );
       }
-    }
 
     if (state.phase.startsWith('move')) {
       const counts = new Map();
@@ -787,15 +802,17 @@ export function createBattleStateService({ db, accountService, battleService }) 
         move.ship.facing = move.facing;
         const count = counts.get(move.target.join(','));
         const blocked = count[1 - move.ship.side] > 0 || count[move.ship.side] > 2;
-        if (blocked) {
-          state.eventLog.push({
+          if (blocked) {
+            state.eventLog.push({
             at: new Date().toISOString(),
-            message: `${move.ship.name} 移动被阻挡（堆叠上限或敌格）`,
-          });
-          continue;
+              message: `${move.ship.name} 移动被阻挡（堆叠上限或敌格）`,
+            });
+            move.ship.lastPath = [[move.ship.hex[0], move.ship.hex[1]]];
+            continue;
+          }
+          move.ship.hex = move.target;
+          move.ship.lastPath = move.path || [[move.ship.hex[0], move.ship.hex[1]]];
         }
-        move.ship.hex = move.target;
-      }
     }
 
     for (const side of [0, 1]) {
