@@ -24,12 +24,22 @@ function addHex(a, b) {
   return [a[0] + b[0], a[1] + b[1]];
 }
 
+function hexDistance(a, b) {
+  return Math.max(
+    Math.abs(a[0] - b[0]),
+    Math.abs(a[1] - b[1]),
+    Math.abs(-a[0] - a[1] + b[0] + b[1]),
+  );
+}
+
 function makeShip(side, index) {
   return {
     id: `${side === 0 ? 'p' : 'e'}_${index}_${randomBytes(3).toString('hex')}`,
     name: `${side === 0 ? 'Player' : 'Enemy'} Ship ${index + 1}`,
     shipId: 'frigate',
     pv: 10,
+    formationLeadId: null,
+    formationIndex: -1,
     side,
     hex: side === 0 ? [2 - index, 0] : [-2 + index, 0],
     facing: side === 0 ? 0 : 3,
@@ -86,6 +96,8 @@ function loadMapShips(db, roomId) {
           name: `${side === 0 ? 'Player' : 'Enemy'} ${shipId} ${index + 1}`,
           shipId,
           pv: 10,
+          formationLeadId: null,
+          formationIndex: -1,
           side,
           hex: [q, r],
           facing,
@@ -138,6 +150,49 @@ function recomputeEconomy(state) {
   state.enemyMaxCP = Math.max(1, state.enemyCommand * 2);
   state.playerCP = Math.min(state.playerCP, state.playerMaxCP);
   state.enemyCP = Math.min(state.enemyCP, state.enemyMaxCP);
+}
+
+function computeFormations(state) {
+  for (const side of [0, 1]) {
+    const ships = state.ships.filter((ship) => ship.side === side && ship.hp > 0);
+    for (const ship of ships) {
+      ship.formationLeadId = null;
+      ship.formationIndex = -1;
+    }
+
+    const ungrouped = new Set(ships);
+    for (const lead of ships) {
+      if (!ungrouped.has(lead)) {
+        continue;
+      }
+      const chain = [lead];
+      let cursor = lead;
+      while (true) {
+        const expected = addHex(cursor.hex, FACING_VECTORS[lead.facing]);
+        const next = ships.find(
+          (candidate) =>
+            ungrouped.has(candidate) &&
+            candidate !== cursor &&
+            candidate.speed === lead.speed &&
+            candidate.facing === lead.facing &&
+            hexDistance(candidate.hex, expected) === 0,
+        );
+        if (!next) {
+          break;
+        }
+        chain.push(next);
+        cursor = next;
+        ungrouped.delete(next);
+      }
+      if (chain.length >= 2) {
+        chain.forEach((ship, index) => {
+          ship.formationLeadId = lead.id;
+          ship.formationIndex = index;
+        });
+      }
+      ungrouped.delete(lead);
+    }
+  }
 }
 
 function createState(battle, db) {
@@ -291,6 +346,7 @@ export function createBattleStateService({ db, accountService, battleService }) 
 
   function settle(state) {
     applyPhase(state);
+    computeFormations(state);
     state.commands = Object.fromEntries(state.players.map((playerId) => [playerId, null]));
     const settledPhase = state.phase;
 
