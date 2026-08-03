@@ -181,7 +181,7 @@ const follower1 = afterMove1.state.ships.find((s) => s.id === followerId);
 if (leader1.hex.join(',') !== '-1,0' || leader1.facing !== 5) {
   throw new Error(`leader turn failed: ${leader1.hex} ${leader1.facing}`);
 }
-if (follower1.hex.join(',') !== '0,0' || follower1.facing !== 0) {
+if (follower1.hex.join(',') !== '0,0' || follower1.facing !== 5) {
   throw new Error(`follower first follow failed: ${follower1.hex} ${follower1.facing}`);
 }
 
@@ -194,14 +194,8 @@ const afterMove2 = await clientA.waitForMessage(
 
 const leader2 = afterMove2.state.ships.find((s) => s.id === leaderId);
 const follower2 = afterMove2.state.ships.find((s) => s.id === followerId);
-if (leader2.hex.join(',') !== '-1,0') {
-  throw new Error(`leader second move failed: ${leader2.hex}`);
-}
-if (follower2.hex.join(',') !== '-1,0' || follower2.facing !== 5) {
-  throw new Error(`follower did not turn at turn cell: ${follower2.hex} ${follower2.facing}`);
-}
-if (follower2.stackTotal !== 2 || follower2.stackIndex !== 1 || leader2.stackIndex !== 0) {
-  throw new Error(`stacking index mismatch: ${leader2.stackIndex}/${leader2.stackTotal} ${follower2.stackIndex}/${follower2.stackTotal}`);
+if (leader2.hex.join(',') !== '-1,0' || follower2.hex.join(',') !== '0,0' || follower2.facing !== 5) {
+  throw new Error(`second phase follow failed: ${leader2.hex} ${follower2.hex} ${follower2.facing}`);
 }
 
 clientA.close();

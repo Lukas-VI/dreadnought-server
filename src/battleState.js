@@ -517,6 +517,7 @@ function createState(battle, db) {
       makeShip(1, 0),
       makeShip(1, 1),
     ],
+    trails: [],
     eventLog: [],
   };
 }
@@ -762,41 +763,62 @@ export function createBattleStateService({ db, accountService, battleService }) 
       }
       formationGroups.get(leadId).push(move);
     }
-      for (const group of formationGroups.values()) {
-        group.sort((a, b) => a.ship.formationIndex - b.ship.formationIndex);
-        const shipById = new Map(state.ships.map((ship) => [ship.id, ship]));
-        for (let i = 1; i < group.length; i++) {
-          const follower = group[i];
-          const aheadMove = group[i - 1];
-          const from = oldHex.get(follower.ship.id);
-          const aheadFrom = oldHex.get(aheadMove.ship.id);
-          if (from && aheadFrom && from[0] === aheadFrom[0] && from[1] === aheadFrom[1]) {
-            follower.path = aheadMove.path.map((hex) => [...hex]);
-            follower.target = [...aheadMove.target];
-            follower.facing = aheadMove.facing;
-            continue;
-          }
-          const aheadShip = shipById.get(group[i - 1].ship.id);
-          const aheadPath = aheadShip &&
-            Array.isArray(aheadShip.lastPath) &&
-            aheadShip.lastPath.length > 1
-            ? aheadShip.lastPath
-            : (aheadShip ? [oldHex.get(aheadShip.id)] : null);
-          if (!aheadPath) {
-            continue;
-          }
-          follower.path = aheadPath.map((hex) => [...hex]);
-          follower.target = follower.path[follower.path.length - 1];
-          if (follower.path.length >= 2) {
-            const last = follower.path[follower.path.length - 1];
-            const previous = follower.path[follower.path.length - 2];
-            follower.facing = facingFromOffset(
-              last[0] - previous[0],
-              last[1] - previous[1],
-            );
-          }
+    for (const group of formationGroups.values()) {
+      group.sort((a, b) => a.ship.formationIndex - b.ship.formationIndex);
+      const leadMove = group[0];
+      const leadId = leadMove.ship.formationLeadId;
+      let trail = state.trails.find((entry) => entry.leadId === leadId);
+      if (!trail) {
+        trail = { leadId, cells: [], headings: [] };
+        state.trails.push(trail);
+      }
+      if (trail.cells.length === 0 ||
+        trail.cells[trail.cells.length - 1].join(',') !== leadMove.ship.hex.join(',')) {
+        const ordered = group.map((move) => move.ship);
+        trail.cells = ordered.map((ship) => [...ship.hex]).reverse();
+        trail.headings = ordered.map((ship) => ship.facing).reverse();
+      }
+      for (let i = 0; i < trail.cells.length; i++) {
+        if (trail.cells[i][0] === leadMove.ship.hex[0] &&
+          trail.cells[i][1] === leadMove.ship.hex[1]) {
+          trail.headings[i] = leadMove.facing;
         }
       }
+      const leadSteps = leadMove.path.length - 1;
+      for (let i = 0; i < leadSteps; i++) {
+        const last = trail.cells[trail.cells.length - 1];
+        const vector = FACING_VECTORS[leadMove.facing];
+        trail.cells.push([last[0] + vector[0], last[1] + vector[1]]);
+        trail.headings.push(leadMove.facing);
+      }
+      for (let k = 1; k < group.length; k++) {
+        const follower = group[k];
+        const old = oldHex.get(follower.ship.id);
+        let index = -1;
+        for (let i = trail.cells.length - 1; i >= 0; i--) {
+          if (trail.cells[i][0] === old[0] && trail.cells[i][1] === old[1]) {
+            index = i;
+            break;
+          }
+        }
+        if (index < 0) {
+          follower.path = [[...old]];
+          follower.target = [...old];
+          continue;
+        }
+        const steps = Math.min(leadSteps, trail.cells.length - 1 - index);
+        if (steps <= 0) {
+          follower.path = [[...old]];
+          follower.target = [...old];
+          continue;
+        }
+        follower.path = trail.cells
+          .slice(index + 1, index + 1 + steps)
+          .map((hex) => [...hex]);
+        follower.target = [...follower.path[follower.path.length - 1]];
+        follower.facing = trail.headings[index + steps];
+      }
+    }
 
     if (state.phase.startsWith('move')) {
       const counts = new Map();
