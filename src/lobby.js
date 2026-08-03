@@ -12,6 +12,7 @@ export function createLobbyService({ db, accountService }) {
   const updateStatus = db.prepare('UPDATE rooms SET status = ? WHERE id = ?');
   const updateOwner = db.prepare('UPDATE rooms SET owner_id = ? WHERE id = ?');
   const updateMap = db.prepare('UPDATE rooms SET map_json = ? WHERE id = ?');
+  const updateShipData = db.prepare('UPDATE rooms SET ship_data_json = ? WHERE id = ?');
   const deletePlayer = db.prepare('DELETE FROM room_players WHERE room_id = ? AND player_id = ?');
   const deleteBattles = db.prepare('DELETE FROM battles WHERE room_id = ?');
   const deleteRoom = db.prepare('DELETE FROM rooms WHERE id = ?');
@@ -30,6 +31,7 @@ export function createLobbyService({ db, accountService }) {
       status: row.status,
       createdAt: row.created_at,
       hasMap: Boolean(row.map_json),
+      hasShipData: Boolean(row.ship_data_json),
     };
   }
 
@@ -41,6 +43,7 @@ export function createLobbyService({ db, accountService }) {
       status: room.status,
       createdAt: room.createdAt,
       hasMap: room.hasMap,
+      hasShipData: room.hasShipData,
     };
   }
 
@@ -79,6 +82,27 @@ export function createLobbyService({ db, accountService }) {
         throw httpError(400, 'invalid_map_json');
       }
       updateMap.run(mapJson, roomId);
+      return publicRoom(loadRoom(roomId));
+    },
+
+    setShipData(token, roomId, shipDataJson) {
+      const user = accountService.resolveToken(token);
+      const room = loadRoom(roomId);
+      if (!room) {
+        throw httpError(404, 'room_not_found');
+      }
+      if (room.ownerId !== user.id) {
+        throw httpError(403, 'not_room_owner');
+      }
+      if (typeof shipDataJson !== 'string' || shipDataJson.length === 0) {
+        throw httpError(400, 'ship_data_required');
+      }
+      try {
+        JSON.parse(shipDataJson);
+      } catch {
+        throw httpError(400, 'invalid_ship_data_json');
+      }
+      updateShipData.run(shipDataJson, roomId);
       return publicRoom(loadRoom(roomId));
     },
 

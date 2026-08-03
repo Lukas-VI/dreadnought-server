@@ -98,6 +98,7 @@ function loadMapShips(db, roomId) {
   }
   try {
     const map = JSON.parse(row.map_json);
+    const statsMap = loadShipStatsMap(db, roomId);
     const generation = map.Generation || {};
     const shipMap = map.Ships || {};
     const ships = [];
@@ -110,7 +111,7 @@ function loadMapShips(db, roomId) {
       const spawns = shipMap[key] || [];
       spawns.forEach((spawn, index) => {
         const shipId = spawn.ShipId || 'frigate';
-        const stats = SHIP_STATS[shipId] || SHIP_STATS.frigate;
+        const stats = statsMap[shipId] || SHIP_STATS[shipId] || SHIP_STATS.frigate;
         const facing = parseDirection(spawn.Direction);
         const speed = clamp(Number(spawn.Speed || 0), 0, stats.speeds[0]);
         ships.push({
@@ -137,6 +138,36 @@ function loadMapShips(db, roomId) {
     return ships.length > 0 ? ships : null;
   } catch {
     return null;
+  }
+}
+
+function loadShipStatsMap(db, roomId) {
+  const row = db.prepare('SELECT ship_data_json FROM rooms WHERE id = ?').get(roomId);
+  if (!row || !row.ship_data_json) {
+    return {};
+  }
+  try {
+    const entries = JSON.parse(row.ship_data_json);
+    const result = {};
+    for (const entry of entries || []) {
+      if (!entry || !entry.shipId) {
+        continue;
+      }
+      result[entry.shipId] = {
+        pv: Number(entry.pv) || 5,
+        maxHp: Number(entry.maxHp) || 4,
+        shipClass: entry.shipClass || 'DD',
+        hull: Array.isArray(entry.hull) && entry.hull.length >= 4
+          ? entry.hull
+          : [1, 2, 3, 4],
+        speeds: Array.isArray(entry.speeds) && entry.speeds.length >= 4
+          ? entry.speeds
+          : [6, 5, 4, 2],
+      };
+    }
+    return result;
+  } catch {
+    return {};
   }
 }
 

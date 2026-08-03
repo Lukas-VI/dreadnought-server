@@ -168,6 +168,17 @@ const roomWithMap = await request(`/api/lobby/rooms/${room.id}/map`, {
   token: a.token,
   body: smokeMap,
 });
+const uploadedShipData = [
+  { shipId: 'dreadnought', pv: 42, maxHp: 42, shipClass: 'BB', hull: [11, 21, 32, 42], speeds: [5, 5, 3, 2] },
+  { shipId: 'cruiser', pv: 16, maxHp: 18, shipClass: 'CL', hull: [4, 9, 13, 18], speeds: [6, 5, 4, 2] },
+  { shipId: 'destroyer', pv: 6, maxHp: 6, shipClass: 'DD', hull: [2, 3, 5, 6], speeds: [6, 6, 4, 2] },
+  { shipId: 'frigate', pv: 5, maxHp: 4, shipClass: 'DD', hull: [1, 2, 3, 4], speeds: [6, 5, 4, 2] },
+];
+await request(`/api/lobby/rooms/${room.id}/shipdata`, {
+  method: 'PUT',
+  token: a.token,
+  body: { ships: uploadedShipData },
+});
 if (!roomWithMap.hasMap) {
   throw new Error('map upload failed');
 }
@@ -243,6 +254,10 @@ const firstShipId = afterSpeed.state.ships.find((ship) => ship.side === firstSid
 const firstShipAfterSpeed = afterSpeed.state.ships.find((ship) => ship.id === firstShipId);
 if (firstShipAfterSpeed.speed !== 3) {
   throw new Error(`accelerate failed: ${firstShipAfterSpeed.speed}`);
+}
+const expectedShip = uploadedShipData.find((entry) => entry.shipId === firstShipAfterSpeed.shipId);
+if (!expectedShip || firstShipAfterSpeed.maxHp !== expectedShip.maxHp) {
+  throw new Error('uploaded ship data not used');
 }
 
 sendShips(firstId, sideShips(afterSpeed.state, firstSide, 'turn_left'));

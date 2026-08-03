@@ -153,6 +153,21 @@ async function handleRequest(req, res) {
       return;
     }
 
+    if (req.method === 'PUT' && path.startsWith('/api/lobby/rooms/') && path.endsWith('/shipdata')) {
+      const roomId = decodeURIComponent(
+        path.slice('/api/lobby/rooms/'.length, path.length - '/shipdata'.length),
+      );
+      const body = await readJson(req);
+      const room = lobbyService.setShipData(
+        bearerToken(req),
+        roomId,
+        JSON.stringify(body.ships || []),
+      );
+      hub.broadcast(room.id, { type: 'room.updated', room });
+      sendJson(res, 200, room);
+      return;
+    }
+
     if (req.method === 'POST' && path === '/api/battle/start') {
       const body = await readJson(req);
       const battle = battleService.start(bearerToken(req), body.roomId);
