@@ -947,9 +947,15 @@ function createState(battle, db) {
 export function createBattleStateService({ db, accountService, battleService }) {
   const states = new Map();
   const timers = new Map();
+  const connections = new Map();
+  const abandonTimers = new Map();
+  const abandonAfterMs = Number(process.env.ABANDON_ROOM_MS) || 5 * 60 * 1000;
   let broadcastState = null;
   const updateState = db.prepare('UPDATE battles SET state_json = ? WHERE id = ?');
   const selectState = db.prepare('SELECT state_json FROM battles WHERE id = ?');
+  const deleteBattlesByRoom = db.prepare('DELETE FROM battles WHERE room_id = ?');
+  const deleteRoomPlayersByRoom = db.prepare('DELETE FROM room_players WHERE room_id = ?');
+  const deleteRoomById = db.prepare('DELETE FROM rooms WHERE id = ?');
 
   function persist(state) {
     updateState.run(JSON.stringify(state), state.id);
@@ -984,6 +990,130 @@ export function createBattleStateService({ db, accountService, battleService }) 
     return state;
   }
 
+  function activeStateForRoom(roomId) {
+    const battle = battleService.getActiveByRoom(roomId);
+    return battle ? getOrCreate(battle) : null;
+  }
+
+  function scheduleAbandon(state) {
+    if (abandonTimers.has(state.roomId)) {
+      return;
+    }
+    const roomId = state.roomId;
+    const battleId = state.id;
+    const handle = setTimeout(() => {
+      abandonTimers.delete(roomId);
+      stopTimer(battleId);
+      const current = activeStateForRoom(roomId);
+      if (!current) {
+        return;
+      }
+      if (current.players.some(
+        (playerId) => (connections.get(`${battleId}:${playerId}`) || new Set()).size > 0,
+      )) {
+        return;
+      }
+      db.transaction(() => {
+        deleteBattlesByRoom.run(roomId);
+        deleteRoomPlayersByRoom.run(roomId);
+        deleteRoomById.run(roomId);
+      })();
+      states.delete(battleId);
+      if (broadcastState) {
+        broadcastState(battleId, {
+          ...publicState(current),
+          status: 'abandoned',
+          paused: true,
+          pausedReason: 'room_abandoned',
+        });
+      }
+    }, abandonAfterMs);
+    if (typeof handle.unref === 'function') {
+      handle.unref();
+    }
+    abandonTimers.set(roomId, handle);
+  }
+
+  function cancelAbandon(state) {
+    const handle = abandonTimers.get(state.roomId);
+    if (handle) {
+      clearTimeout(handle);
+    }
+    abandonTimers.delete(state.roomId);
+  }
+
+  function refreshPause(state) {
+    if (state.status !== 'active') {
+      return;
+    }
+    const allConnected = state.players.every(
+      (playerId) => (connections.get(`${state.id}:${playerId}`) || new Set()).size > 0,
+    );
+    if (allConnected) {
+      cancelAbandon(state);
+      if (state.paused) {
+        state.paused = false;
+        state.pausedReason = '';
+        state.eventLog.push({
+          at: new Date().toISOString(),
+          message: '对手已重连，对局恢复',
+        });
+        const allSubmitted = state.players.every((playerId) => state.commands[playerId]);
+        if (allSubmitted) {
+          settle(state);
+        }
+        startTimer(state);
+        persist(state);
+        if (broadcastState) {
+          broadcastState(state.id, publicState(state));
+        }
+      }
+      return;
+    }
+    const anyConnected = state.players.some(
+      (playerId) => (connections.get(`${state.id}:${playerId}`) || new Set()).size > 0,
+    );
+    if (!anyConnected) {
+      scheduleAbandon(state);
+    } else {
+      cancelAbandon(state);
+    }
+    if (!state.paused) {
+      state.paused = true;
+      state.pausedReason = 'opponent_disconnected';
+      stopTimer(state.id);
+      state.eventLog.push({
+        at: new Date().toISOString(),
+        message: '对手断线，对局暂停',
+      });
+      persist(state);
+      if (broadcastState) {
+        broadcastState(state.id, publicState(state));
+      }
+    }
+  }
+
+  function markConnected(state, userId, socketId) {
+    const key = `${state.id}:${userId}`;
+    if (!connections.has(key)) {
+      connections.set(key, new Set());
+    }
+    connections.get(key).add(socketId);
+    refreshPause(state);
+  }
+
+  function markDisconnected(state, userId, socketId) {
+    const key = `${state.id}:${userId}`;
+    const sockets = connections.get(key);
+    if (sockets) {
+      sockets.delete(socketId);
+      if (sockets.size === 0) {
+        connections.delete(key);
+      }
+    }
+    refreshPause(state);
+  }
+
   function publicState(state) {
     return {
       id: state.id,
@@ -992,6 +1122,8 @@ export function createBattleStateService({ db, accountService, battleService }) 
       turn: state.turn,
       phase: state.phase,
       status: state.status,
+      paused: Boolean(state.paused),
+      pausedReason: state.pausedReason || '',
       winner: state.winner,
       maxTurns: state.maxTurns,
       turnOrder: state.turnOrder,
@@ -1427,7 +1559,7 @@ export function createBattleStateService({ db, accountService, battleService }) 
   function startTimer(state) {
     stopTimer(state.id);
     state.timerActivePlayer = state.activePlayer;
-    if (state.status !== 'active' || PHASE_INDEX[state.phase] == null) {
+    if (state.status !== 'active' || state.paused || PHASE_INDEX[state.phase] == null) {
       state.timerRemaining = 0;
       state.timerTotal = 0;
       state.timerStartAt = 0;
@@ -1472,6 +1604,10 @@ export function createBattleStateService({ db, accountService, battleService }) 
   }
 
   function syncTimer(state) {
+    if (state.paused) {
+      stopTimer(state.id);
+      return;
+    }
     if (state.status === 'active' && !timers.has(state.id)) {
       startTimer(state);
     } else if (state.status !== 'active') {
@@ -1490,6 +1626,9 @@ export function createBattleStateService({ db, accountService, battleService }) 
       const { user, state } = resolveBattle(token, battleId);
       if (state.status !== 'active') {
         throw httpError(409, 'battle_not_active');
+      }
+      if (state.paused) {
+        throw httpError(409, 'battle_paused');
       }
       if (state.commands[user.id]) {
         throw httpError(409, 'already_submitted');
@@ -1523,10 +1662,37 @@ export function createBattleStateService({ db, accountService, battleService }) 
       if (state.status !== 'active') {
         throw httpError(409, 'battle_not_active');
       }
+      if (state.paused) {
+        throw httpError(409, 'battle_paused');
+      }
       advanceState(state);
       startTimer(state);
       persist(state);
       return publicState(state);
+    },
+
+    isRoomBattleActive(roomId) {
+      return Boolean(battleService.getActiveByRoom(roomId));
+    },
+
+    handleDisconnect(token, roomId, socketId) {
+      const user = accountService.resolveToken(token);
+      const state = activeStateForRoom(roomId);
+      if (!state) {
+        return false;
+      }
+      markDisconnected(state, user.id, socketId);
+      return true;
+    },
+
+    handleReconnect(token, roomId, socketId) {
+      const user = accountService.resolveToken(token);
+      const state = activeStateForRoom(roomId);
+      if (!state) {
+        return false;
+      }
+      markConnected(state, user.id, socketId);
+      return true;
     },
 
     setBroadcastCallback(callback) {

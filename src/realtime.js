@@ -10,6 +10,7 @@ export function createRealtimeHub({
   battleStateService,
 }) {
   const wss = new WebSocketServer({ server, path: '/ws' });
+  let socketSeq = 0;
   const socketAuth = new Map();
   const socketRooms = new Map();
   const roomSockets = new Map();
@@ -59,7 +60,7 @@ export function createRealtimeHub({
     }
   }
 
-  function cleanupPlayerRooms(ws) {
+  function cleanupPlayerRooms(ws, socketId) {
     const auth = socketAuth.get(ws);
     const rooms = socketRooms.get(ws);
     if (!auth || !rooms) {
@@ -68,11 +69,15 @@ export function createRealtimeHub({
 
     for (const roomId of rooms) {
       try {
-        const room = lobbyService.leave(auth.token, roomId);
-        if (room) {
-          broadcast(room.id, { type: 'room.updated', room });
+        if (battleStateService.isRoomBattleActive(roomId)) {
+          battleStateService.handleDisconnect(auth.token, roomId, socketId);
         } else {
-          broadcast(roomId, { type: 'room.removed', roomId });
+          const room = lobbyService.leave(auth.token, roomId);
+          if (room) {
+            broadcast(room.id, { type: 'room.updated', room });
+          } else {
+            broadcast(roomId, { type: 'room.removed', roomId });
+          }
         }
       } catch {
         // 房间可能已被删除，忽略清理竞态。
@@ -83,6 +88,7 @@ export function createRealtimeHub({
 
   wss.on('connection', (ws) => {
     console.log('[ws] connection', new Date().toISOString());
+    const socketId = `sock_${++socketSeq}`;
     socketAuth.set(ws, null);
     socketRooms.set(ws, new Set());
 
@@ -108,6 +114,7 @@ export function createRealtimeHub({
             const auth = requireAuth(ws);
             joinRoom(ws, message.roomId);
             console.log('[ws] join', auth.user.id, message.roomId);
+            battleStateService.handleReconnect(auth.token, message.roomId, socketId);
             send(ws, { type: 'room.state', room: lobbyService.get(auth.token, message.roomId) });
             break;
           }
@@ -161,14 +168,14 @@ export function createRealtimeHub({
     ws.on('close', (code, reason) => {
       const auth = socketAuth.get(ws);
       console.log('[ws] close', auth?.user?.id, code, reason, new Date().toISOString());
-      cleanupPlayerRooms(ws);
+      cleanupPlayerRooms(ws, socketId);
       socketRooms.delete(ws);
       socketAuth.delete(ws);
     });
   });
 
   battleStateService.setBroadcastCallback((battleId, state) => {
-    broadcast(battleId, { type: 'battle.state', state });
+    broadcast(state.roomId, { type: 'battle.state', state });
   });
 
   return { broadcast, wss };

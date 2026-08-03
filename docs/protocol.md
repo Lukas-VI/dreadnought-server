@@ -89,6 +89,15 @@ receives:
 
 Leave a room with `{ "type": "lobby.leave", "roomId": "room_..." }`.
 
+During an active battle, a websocket disconnect does not remove the player
+from the room. The server marks the battle as paused and stops the phase
+timer; the remaining player receives `paused: true` and `pausedReason:
+"opponent_disconnected"` in `battle.state`. Commands are rejected with
+`battle_paused` while paused. Reconnect by opening a new websocket,
+authenticating, and sending `lobby.join` for the same room; the battle resumes
+and the authoritative state is re-synced. If both players stay disconnected
+for `ABANDON_ROOM_MS` (default 5 minutes), the room and battle are deleted.
+
 ## Battle state machine
 
 Fetch the current authoritative state:

@@ -129,5 +129,10 @@ export function createBattleService({ db, accountService, lobbyService }) {
           at: row.at,
         }));
     },
+
+    getActiveByRoom(roomId) {
+      const row = selectActiveBattle.get(roomId);
+      return row ? loadBattle(row.id) : null;
+    },
   };
 }
