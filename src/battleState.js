@@ -30,6 +30,13 @@ const FACING_VECTORS = [
   [-1, 0], // NW
 ];
 
+const SHIP_STATS = {
+  dreadnought: { pv: 42, maxHp: 42, shipClass: 'BB', hull: [11, 21, 32, 42], speeds: [5, 5, 3, 2] },
+  cruiser: { pv: 16, maxHp: 18, shipClass: 'CL', hull: [4, 9, 13, 18], speeds: [6, 5, 4, 2] },
+  destroyer: { pv: 6, maxHp: 6, shipClass: 'DD', hull: [2, 3, 5, 6], speeds: [6, 6, 4, 2] },
+  frigate: { pv: 5, maxHp: 4, shipClass: 'DD', hull: [1, 2, 3, 4], speeds: [6, 5, 4, 2] },
+};
+
 function addHex(a, b) {
   return [a[0] + b[0], a[1] + b[1]];
 }
@@ -43,20 +50,24 @@ function hexDistance(a, b) {
 }
 
 function makeShip(side, index) {
+  const stats = SHIP_STATS.frigate;
   return {
     id: `${side === 0 ? 'p' : 'e'}_${index}_${randomBytes(3).toString('hex')}`,
     name: `${side === 0 ? 'Player' : 'Enemy'} Ship ${index + 1}`,
     shipId: 'frigate',
-    pv: 10,
+    pv: stats.pv,
+    shipClass: stats.shipClass,
+    hull: stats.hull,
+    speeds: stats.speeds,
     formationLeadId: null,
     formationIndex: -1,
     side,
     hex: side === 0 ? [2 - index, 0] : [-2 + index, 0],
     facing: side === 0 ? 0 : 3,
     speed: 2,
-    maxSpeed: 5,
-    hp: 10,
-    maxHp: 10,
+    maxSpeed: stats.speeds[0],
+    hp: stats.maxHp,
+    maxHp: stats.maxHp,
     status: 'intact',
   };
 }
@@ -99,22 +110,26 @@ function loadMapShips(db, roomId) {
       const spawns = shipMap[key] || [];
       spawns.forEach((spawn, index) => {
         const shipId = spawn.ShipId || 'frigate';
+        const stats = SHIP_STATS[shipId] || SHIP_STATS.frigate;
         const facing = parseDirection(spawn.Direction);
-        const speed = clamp(Number(spawn.Speed || 0), 0, 5);
+        const speed = clamp(Number(spawn.Speed || 0), 0, stats.speeds[0]);
         ships.push({
           id: `${side === 0 ? 'p' : 'e'}_${index}_${key.replace(',', '_')}`,
           name: `${side === 0 ? 'Player' : 'Enemy'} ${shipId} ${index + 1}`,
           shipId,
-          pv: 10,
+          pv: stats.pv,
+          shipClass: stats.shipClass,
+          hull: stats.hull,
+          speeds: stats.speeds,
           formationLeadId: null,
           formationIndex: -1,
           side,
           hex: [q, r],
           facing,
           speed,
-          maxSpeed: 5,
-          hp: 10,
-          maxHp: 10,
+          maxSpeed: stats.speeds[0],
+          hp: stats.maxHp,
+          maxHp: stats.maxHp,
           status: 'intact',
         });
       });
@@ -141,20 +156,111 @@ function clamp(value, min, max) {
   return Math.max(min, Math.min(max, value));
 }
 
+function tierOf(ship) {
+  const cls = ship.shipClass || '';
+  if (/^(BB|BC)/i.test(cls)) {
+    return 'large';
+  }
+  if (/^(CA|CL|CB)/i.test(cls)) {
+    return 'medium';
+  }
+  return 'small';
+}
+
+function damageStateOf(ship) {
+  const damage = Math.max(0, ship.maxHp - ship.hp);
+  const [light, moderate, heavy, sunk] = ship.hull || [1, 2, 3, 4];
+  if (damage >= sunk) {
+    return 'sunk';
+  }
+  if (damage >= heavy) {
+    return 'heavy';
+  }
+  if (damage >= moderate) {
+    return 'moderate';
+  }
+  if (damage >= light) {
+    return 'light';
+  }
+  return 'intact';
+}
+
+function maxSpeedForState(ship) {
+  const state = ship.hp <= 0 ? 'sunk' : damageStateOf(ship);
+  const speeds = ship.speeds || [6, 5, 4, 2];
+  const index = { intact: 0, light: 1, moderate: 2, heavy: 3 }[state];
+  return index == null ? 0 : speeds[index];
+}
+
+function commandValue(ships, base) {
+  let largeLight = 0;
+  let largeSevere = 0;
+  let mediumSevere = 0;
+  let smallSevere = 0;
+  for (const ship of ships) {
+    if (ship.hp <= 0) {
+      const tier = tierOf(ship);
+      if (tier === 'large') {
+        largeSevere += 1;
+      } else if (tier === 'medium') {
+        mediumSevere += 1;
+      } else {
+        smallSevere += 1;
+      }
+      continue;
+    }
+    const state = damageStateOf(ship);
+    if (state === 'intact') {
+      continue;
+    }
+    const tier = tierOf(ship);
+    if (tier === 'large') {
+      if (state === 'light') {
+        largeLight += 1;
+      } else {
+        largeSevere += 1;
+      }
+    } else if (tier === 'medium') {
+      if (state !== 'light') {
+        mediumSevere += 1;
+      }
+    } else if (state !== 'light') {
+      smallSevere += 1;
+    }
+  }
+  const reduction = largeSevere * 2 + largeLight + mediumSevere
+    + (smallSevere >= 3 ? 1 : 0);
+  return Math.max(1, Math.max(1, base) - reduction);
+}
+
+function pvScoreForShip(ship) {
+  const state = ship.hp <= 0 ? 'sunk' : damageStateOf(ship);
+  if (state === 'sunk') {
+    return ship.pv || 0;
+  }
+  if (state === 'heavy') {
+    return Math.floor((ship.pv || 0) / 2);
+  }
+  if (state === 'moderate') {
+    return Math.floor((ship.pv || 0) / 4);
+  }
+  return 0;
+}
+
 function recomputeEconomy(state) {
   state.playerScore = state.ships
-    .filter((ship) => ship.side === 1 && ship.hp <= 0)
-    .reduce((sum, ship) => sum + (ship.pv || 10), 0);
+    .filter((ship) => ship.side === 1)
+    .reduce((sum, ship) => sum + pvScoreForShip(ship), 0);
   state.enemyScore = state.ships
-    .filter((ship) => ship.side === 0 && ship.hp <= 0)
-    .reduce((sum, ship) => sum + (ship.pv || 10), 0);
-  state.playerCommand = Math.max(
-    1,
-    state.basePlayerCommand - state.ships.filter((ship) => ship.side === 0 && ship.hp <= 0).length,
+    .filter((ship) => ship.side === 0)
+    .reduce((sum, ship) => sum + pvScoreForShip(ship), 0);
+  state.playerCommand = commandValue(
+    state.ships.filter((ship) => ship.side === 0),
+    state.basePlayerCommand,
   );
-  state.enemyCommand = Math.max(
-    1,
-    state.baseEnemyCommand - state.ships.filter((ship) => ship.side === 1 && ship.hp <= 0).length,
+  state.enemyCommand = commandValue(
+    state.ships.filter((ship) => ship.side === 1),
+    state.baseEnemyCommand,
   );
   state.playerMaxCP = Math.max(1, state.playerCommand * 2);
   state.enemyMaxCP = Math.max(1, state.enemyCommand * 2);
@@ -436,7 +542,7 @@ export function createBattleStateService({ db, accountService, battleService }) 
             : action === 'decelerate'
               ? -1
               : 0;
-          ship.speed = clamp(ship.speed + delta, 0, ship.maxSpeed);
+          ship.speed = clamp(ship.speed + delta, 0, maxSpeedForState(ship));
           continue;
         }
 
