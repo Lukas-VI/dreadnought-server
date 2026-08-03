@@ -183,8 +183,9 @@ export function createLobbyService({ db, accountService }) {
       accountService.resolveToken(token);
       return selectRoomIds
         .all()
-        .map((entry) => publicRoom(loadRoom(entry.id)))
-        .filter(Boolean);
+        .map((entry) => loadRoom(entry.id))
+        .filter((room) => room && (room.status === 'waiting' || room.status === 'ready'))
+        .map(publicRoom);
     },
   };
 }

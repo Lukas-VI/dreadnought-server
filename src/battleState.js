@@ -533,6 +533,10 @@ export function createBattleStateService({ db, accountService, battleService }) 
     updateState.run(JSON.stringify(state), state.id);
   }
 
+  function markRoomFinished(state) {
+    db.prepare("UPDATE rooms SET status = 'finished' WHERE id = ?").run(state.roomId);
+  }
+
   function load(battleId) {
     const row = selectState.get(battleId);
     if (!row || !row.state_json) {
@@ -637,6 +641,9 @@ export function createBattleStateService({ db, accountService, battleService }) 
 
   function settle(state) {
     applyPhase(state);
+    if (state.status === 'finished') {
+      markRoomFinished(state);
+    }
     computeStacking(state);
     computeFormations(state);
     state.commands = Object.fromEntries(state.players.map((playerId) => [playerId, null]));
@@ -662,7 +669,20 @@ export function createBattleStateService({ db, accountService, battleService }) 
       if (state.status !== 'active' || state.turn >= state.maxTurns) {
         if (state.status === 'active') {
           state.status = 'finished';
-          state.winner = state.players[0];
+          markRoomFinished(state);
+          if (state.playerScore > state.enemyScore) {
+            state.winner = state.players[0];
+          } else if (state.enemyScore > state.playerScore) {
+            state.winner = state.players[1];
+          } else {
+            state.winner = null;
+          }
+          state.eventLog.push({
+            at: new Date().toISOString(),
+            message: state.winner
+              ? `回合上限到达，${state.winner} 以 PV 获胜`
+              : '回合上限到达，双方 PV 平局',
+          });
         }
         return;
       }
