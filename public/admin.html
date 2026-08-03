@@ -178,8 +178,12 @@ function escapeHtml(value) {
 }
 
 async function api(path, options = {}) {
+  const publicPaths = ['/api/auth/login', '/api/auth/register', '/api/time', '/health'];
   const headers = { 'content-type': 'application/json' };
-  if (state.token) headers.authorization = `Bearer ${state.token}`;
+  if (state.token && !publicPaths.includes(path)) {
+    headers.authorization = `Bearer ${state.token}`;
+  }
+  Object.assign(headers, options.headers || {});
   const response = await fetch(path, { ...options, headers });
   const text = await response.text();
   let payload = {};
@@ -217,6 +221,10 @@ async function doLogin(event) {
         password: document.getElementById('login-password').value,
       }),
     });
+    if (!result.token) {
+      status.textContent = '登录响应缺少 token';
+      return;
+    }
     const me = await api('/api/me', { headers: { authorization: `Bearer ${result.token}` } });
     if (me.role !== 'admin') {
       status.textContent = '该账号不是管理员';
