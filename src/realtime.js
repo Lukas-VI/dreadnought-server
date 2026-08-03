@@ -167,5 +167,9 @@ export function createRealtimeHub({
     });
   });
 
+  battleStateService.setBroadcastCallback((battleId, state) => {
+    broadcast(battleId, { type: 'battle.state', state });
+  });
+
   return { broadcast, wss };
 }

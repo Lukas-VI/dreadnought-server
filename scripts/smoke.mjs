@@ -208,6 +208,9 @@ if (initial.state.turn !== 1) {
 if (typeof initial.state.playerCP !== 'number' || typeof initial.state.enemyCP !== 'number') {
   throw new Error('battle state missing cp fields');
 }
+if (typeof initial.state.timerTotal !== 'number' || initial.state.timerTotal <= 0) {
+  throw new Error('battle state missing authoritative timer');
+}
 
 const firstId = initial.state.activePlayer;
 const secondId = firstId === a.user.id ? b.user.id : a.user.id;

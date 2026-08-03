@@ -11,6 +11,14 @@ const NEXT_PHASE = {
   settlement: 'speed',
 };
 
+const PHASE_INDEX = {
+  speed: 0,
+  move1: 1,
+  move2: 2,
+  move3: 3,
+  gunnery: 4,
+};
+
 const FACING_VECTORS = [
   [0, -1], // N
   [1, -1], // NE
@@ -224,6 +232,14 @@ function createState(battle, db) {
     enemyCP: Math.min(Number(config.EnemyInitialCP) || 8, enemyMaxCP),
     playerScore: 0,
     enemyScore: 0,
+    phaseSeconds: Array.isArray(config.PhaseSecondsPerShip) &&
+      config.PhaseSecondsPerShip.length >= 5
+      ? config.PhaseSecondsPerShip
+      : [5, 5, 5, 5, 5, 10, 10, 0],
+    phaseExtra: Number(config.PhaseExtraSeconds) || 5,
+    timerRemaining: 0,
+    timerTotal: 0,
+    timerActivePlayer: null,
     turnOrder: [first, second],
     activePlayer: first,
     initiative: {
@@ -243,6 +259,8 @@ function createState(battle, db) {
 
 export function createBattleStateService({ db, accountService, battleService }) {
   const states = new Map();
+  const timers = new Map();
+  let broadcastState = null;
   const updateState = db.prepare('UPDATE battles SET state_json = ? WHERE id = ?');
   const selectState = db.prepare('SELECT state_json FROM battles WHERE id = ?');
 
@@ -295,6 +313,9 @@ export function createBattleStateService({ db, accountService, battleService }) 
       enemyCP: state.enemyCP,
       playerScore: state.playerScore,
       enemyScore: state.enemyScore,
+      timerRemaining: state.timerRemaining,
+      timerTotal: state.timerTotal,
+      timerActivePlayer: state.timerActivePlayer,
       commands: Object.fromEntries(
         Object.entries(state.commands).map(([playerId, command]) => [
           playerId,
@@ -478,9 +499,84 @@ export function createBattleStateService({ db, accountService, battleService }) 
     recomputeEconomy(state);
   }
 
+  function stopTimer(battleId) {
+    const entry = timers.get(battleId);
+    if (entry && entry.handle) {
+      clearInterval(entry.handle);
+    }
+    timers.delete(battleId);
+  }
+
+  function advanceState(state) {
+    if (state.status !== 'active') {
+      return;
+    }
+    if (!state.commands[state.activePlayer]) {
+      state.commands[state.activePlayer] = { ships: [] };
+    }
+    if (state.activePlayer === state.turnOrder[0]) {
+      state.activePlayer = state.turnOrder[1];
+    } else {
+      settle(state);
+    }
+    persist(state);
+  }
+
+  function startTimer(state) {
+    stopTimer(state.id);
+    state.timerActivePlayer = state.activePlayer;
+    if (state.status !== 'active' || PHASE_INDEX[state.phase] == null) {
+      state.timerRemaining = 0;
+      state.timerTotal = 0;
+      return;
+    }
+    const phaseIndex = PHASE_INDEX[state.phase];
+    const perShip = Number(state.phaseSeconds[phaseIndex]) || 5;
+    const side = state.players.indexOf(state.activePlayer);
+    const count = state.ships.filter((ship) => ship.side === side && ship.hp > 0).length;
+    const total = Math.max(1, perShip * count + (Number(state.phaseExtra) || 5));
+    state.timerRemaining = total;
+    state.timerTotal = total;
+    const battleId = state.id;
+    timers.set(battleId, {
+      remaining: total,
+      total,
+      handle: setInterval(() => {
+        const entry = timers.get(battleId);
+        if (!entry) {
+          return;
+        }
+        entry.remaining = Math.max(0, entry.remaining - 1);
+        state.timerRemaining = entry.remaining;
+        persist(state);
+        if (broadcastState) {
+          broadcastState(battleId, publicState(state));
+        }
+        if (entry.remaining <= 0) {
+          stopTimer(battleId);
+          advanceState(state);
+          startTimer(state);
+          persist(state);
+          if (broadcastState) {
+            broadcastState(battleId, publicState(state));
+          }
+        }
+      }, 1000),
+    });
+  }
+
+  function syncTimer(state) {
+    if (state.status === 'active' && !timers.has(state.id)) {
+      startTimer(state);
+    } else if (state.status !== 'active') {
+      stopTimer(state.id);
+    }
+  }
+
   return {
     getState(token, battleId) {
       const { state } = resolveBattle(token, battleId);
+      syncTimer(state);
       return publicState(state);
     },
 
@@ -510,11 +606,8 @@ export function createBattleStateService({ db, accountService, battleService }) 
       state.commands[user.id] = { ships: shipCommands };
       persist(state);
 
-      if (user.id === state.turnOrder[0]) {
-        state.activePlayer = state.turnOrder[1];
-      } else {
-        settle(state);
-      }
+      advanceState(state);
+      startTimer(state);
       persist(state);
       return publicState(state);
     },
@@ -524,18 +617,14 @@ export function createBattleStateService({ db, accountService, battleService }) 
       if (state.status !== 'active') {
         throw httpError(409, 'battle_not_active');
       }
-      for (const playerId of state.players) {
-        if (!state.commands[playerId]) {
-          state.commands[playerId] = { ships: [] };
-        }
-      }
-      if (state.activePlayer === state.turnOrder[0]) {
-        state.activePlayer = state.turnOrder[1];
-      } else {
-        settle(state);
-      }
+      advanceState(state);
+      startTimer(state);
       persist(state);
       return publicState(state);
+    },
+
+    setBroadcastCallback(callback) {
+      broadcastState = callback;
     },
   };
 }
