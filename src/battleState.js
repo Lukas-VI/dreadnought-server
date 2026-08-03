@@ -807,9 +807,9 @@ export function createBattleStateService({ db, accountService, battleService }) 
         counts.set(key, count);
       }
 
-      for (const move of moves) {
-        move.ship.facing = move.facing;
-        const count = counts.get(move.target.join(','));
+        for (const move of moves) {
+          move.ship.facing = move.facing;
+          const count = counts.get(move.target.join(','));
         const blocked = count[1 - move.ship.side] > 0 || count[move.ship.side] > 2;
           if (blocked) {
             state.eventLog.push({
@@ -822,7 +822,42 @@ export function createBattleStateService({ db, accountService, battleService }) 
           move.ship.hex = move.target;
           move.ship.lastPath = move.path || [[move.ship.hex[0], move.ship.hex[1]]];
         }
-    }
+
+        for (let pass = 0; pass < 3; pass++) {
+          const actual = new Map();
+          for (const ship of state.ships) {
+            const key = `${ship.side}:${ship.hex.join(',')}`;
+            const count = actual.get(key) || { 0: 0, 1: 0 };
+            count[ship.side] += 1;
+            actual.set(key, count);
+          }
+          let violation = false;
+          for (const [key, count] of actual) {
+            if (count[0] > 2 || count[1] > 2) {
+              violation = true;
+              const side = Number(key.split(':')[0]);
+              const hex = key.split(':')[1].split(',').map(Number);
+              const group = state.ships
+                .filter((ship) => ship.side === side && ship.hex[0] === hex[0] && ship.hex[1] === hex[1])
+                .sort((a, b) => (b.stackIndex || 0) - (a.stackIndex || 0));
+              for (const ship of group.slice(2)) {
+                const fallback = oldHex.get(ship.id);
+                if (fallback) {
+                  ship.hex = [...fallback];
+                  ship.lastPath = [[...fallback]];
+                  state.eventLog.push({
+                    at: new Date().toISOString(),
+                    message: `${ship.name} 堆叠超限，退回原格`,
+                  });
+                }
+              }
+            }
+          }
+          if (!violation) {
+            break;
+          }
+        }
+      }
 
     for (const side of [0, 1]) {
       const alive = state.ships.some(
