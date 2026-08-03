@@ -117,6 +117,18 @@ Phases and actions:
 - `move1` / `move2` / `move3`: `turn_left`, `turn_right`, `wait`
 - `gunnery`: `fire` with a `targetShipId`, or `wait`
 
+Speed changes and turns cost 1 CP per ship; firing costs 2 CP for
+BB/BC and 1 CP for other classes. The server refuses an action at
+settlement when the side has insufficient CP, and reports it in the event
+log. `mainAmmo` is authoritative on the server and decremented on each
+successful fire.
+
+Gunnery is resolved with the uploaded ShipData combat fields: firing arcs,
+range, caliber/attack power, secondary battery, distance-based armor, hit
+threshold, and optional `radarUsed` in the fire detail. Movement is resolved
+step by step: island hexes sink the ship, enemy-occupied or full friendly
+stacks block, and a blocked move may trigger the simplified collision roll.
+
 Force the phase forward when the opponent has not submitted yet:
 
 ```json
@@ -127,7 +139,9 @@ Every state change is broadcast to the room as `battle.state` with the current
 turn, phase, ship positions, HP, and pending command summary. The state also
 includes `turnOrder` (first player acts first in the current turn) and
 `activePlayer` (whose command is currently accepted). Initiative is rolled once
-at battle start, then the first-player order swaps at each turn end.
+at battle start, then the first-player order swaps at each turn end. If the
+uploaded map defines `InitiativeOwner` (`player` / `enemy`), it is used instead
+of the opening roll.
 
 ## Gacha
 

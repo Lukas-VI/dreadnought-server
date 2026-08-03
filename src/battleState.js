@@ -37,6 +37,30 @@ const SHIP_STATS = {
   frigate: { pv: 5, maxHp: 4, shipClass: 'DD', hull: [1, 2, 3, 4], speeds: [6, 5, 4, 2] },
 };
 
+const DEFAULT_COMBAT = {
+  attackRange: 4,
+  attackPower: 6,
+  mainAmmo: 12,
+  forwardFire: 2,
+  sideFire: 4,
+  backwardFire: 2,
+  gunCaliber: 12,
+  secondaryForwardFire: 0,
+  secondarySideFire: 0,
+  secondaryBackwardFire: 0,
+  secondaryGunCaliber: 12,
+  secondaryAttackPower: 0,
+  armorClose: 0,
+  armorMedium: 0,
+  armorFar: 0,
+  radarType: '',
+};
+
+function numOr(value, fallback) {
+  const number = Number(value);
+  return Number.isFinite(number) ? number : fallback;
+}
+
 const SPEED_TABLE = [
   { p1: 0, p2: 0, p3: 0 },
   { p1: 0, p2: 0, p3: 0, alternate: true },
@@ -75,6 +99,284 @@ function hexDistance(a, b) {
   );
 }
 
+function isIsland(terrain, hex) {
+  const value = terrain ? terrain[hex.join(',')] : undefined;
+  if (typeof value === 'number') {
+    return value === 1;
+  }
+  return value === 'island';
+}
+
+function consumeSideCP(state, side, cost) {
+  if (cost <= 0) {
+    return true;
+  }
+  if (side === 0) {
+    if (state.playerCP < cost) {
+      return false;
+    }
+    state.playerCP -= cost;
+    return true;
+  }
+  if (state.enemyCP < cost) {
+    return false;
+  }
+  state.enemyCP -= cost;
+  return true;
+}
+
+function baseDamage(caliberInches) {
+  const caliber = numOr(caliberInches, 12);
+  if (caliber >= 18) return 12;
+  if (caliber >= 16) return 10;
+  if (caliber >= 14) return 8;
+  if (caliber >= 12) return 6;
+  if (caliber >= 8) return 4;
+  return 2;
+}
+
+function radarHitModifier(radarType) {
+  if (!radarType) return 0;
+  const key = String(radarType).toLowerCase();
+  if (key.includes('jp')) return -3;
+  if (key.includes('us')) return key.includes('a') ? -2 : 0;
+  return 0;
+}
+
+function hitThreshold(distanceHex, radarUsed, ship) {
+  let threshold = distanceHex <= 2 ? 8
+    : distanceHex <= 5 ? 6
+      : distanceHex <= 8 ? 4
+        : distanceHex <= 12 ? 2
+          : 1;
+  if (radarUsed) {
+    threshold += radarHitModifier(ship.radarType);
+  }
+  return clamp(threshold, 1, 10);
+}
+
+function firingArc(shipHex, targetHex, facing) {
+  const dq = targetHex[0] - shipHex[0];
+  const dr = targetHex[1] - shipHex[1];
+  if (dq === 0 && dr === 0) {
+    return 'Center';
+  }
+  const x = Math.sqrt(3) * (dq + dr / 2);
+  const y = 1.5 * dr;
+  let angle = Math.atan2(y, x) * 180 / Math.PI % 360;
+  if (angle < 0) {
+    angle += 360;
+  }
+  const facingAngle = (facing % 6) * 60 + 60;
+  let relAngle = (angle - facingAngle) % 360;
+  if (relAngle < 0) {
+    relAngle += 360;
+  }
+  if (relAngle <= 30.1 || relAngle >= 329.9) {
+    return 'Front';
+  }
+  if (relAngle >= 149.9 && relAngle <= 210.1) {
+    return 'Rear';
+  }
+  if (relAngle > 30.1 && relAngle < 149.9) {
+    return 'Port';
+  }
+  return 'Starboard';
+}
+
+function arcPowerFor(ship, arc, secondary) {
+  if (!ship) {
+    return secondary ? 0 : 6;
+  }
+  const baseKey = arc === 'Front' ? 'forwardFire' : arc === 'Rear' ? 'backwardFire' : 'sideFire';
+  const key = secondary
+    ? `secondary${baseKey.charAt(0).toUpperCase()}${baseKey.slice(1)}`
+    : baseKey;
+  return numOr(ship[key], secondary ? 0 : 6);
+}
+
+function weaponBasePower(ship, secondary) {
+  if (!secondary) {
+    return numOr(ship.attackPower, 6);
+  }
+  const configured = numOr(ship.secondaryAttackPower, 0);
+  if (configured > 0) {
+    return configured;
+  }
+  const mainDamage = Math.max(1, baseDamage(ship.gunCaliber));
+  const secondaryDamage = Math.max(1, baseDamage(ship.secondaryGunCaliber));
+  return Math.max(1, Math.floor(numOr(ship.attackPower, 6) * secondaryDamage / mainDamage));
+}
+
+function stateCoeff(ship) {
+  const state = damageStateOf(ship);
+  return state === 'intact' ? 3 : state === 'light' ? 2 : state === 'moderate' ? 1 : 0;
+}
+
+function armorFor(ship, distanceHex) {
+  if (distanceHex <= 3) {
+    return numOr(ship.armorClose, 8);
+  }
+  if (distanceHex <= 7) {
+    return numOr(ship.armorMedium, 6);
+  }
+  return numOr(ship.armorFar, 3);
+}
+
+function resolveShotCheck(ship, target, distanceHex, radarUsed, secondary) {
+  const weapon = secondary ? '副炮' : '主炮';
+  const threshold = hitThreshold(distanceHex, radarUsed, ship);
+  const roll = randomInt(1, 11);
+  const coeff = stateCoeff(ship);
+  if (coeff <= 0) {
+    return {
+      Hit: false,
+      HitThreshold: threshold,
+      HitRoll: roll,
+      Damage: 0,
+      Detail: `${ship.name} 大破/沉没，无法射击`,
+    };
+  }
+  const arc = firingArc(ship.hex, target.hex, ship.facing);
+  const arcPower = arcPowerFor(ship, arc, secondary);
+  if (arcPower <= 0) {
+    return {
+      Hit: false,
+      HitThreshold: threshold,
+      HitRoll: roll,
+      Damage: 0,
+      Detail: `${ship.name} ${weapon} → ${target.name} 目标不在射界内，无法开火`,
+    };
+  }
+  if (roll > threshold) {
+    return {
+      Hit: false,
+      HitThreshold: threshold,
+      HitRoll: roll,
+      Damage: 0,
+      Detail: `${ship.name} ${weapon} → ${target.name} 命中检定：1D10=${roll} > ${threshold}，未命中`,
+    };
+  }
+  const baseDmg = Math.max(1, Math.floor(weaponBasePower(ship, secondary) * arcPower * coeff / 18));
+  const distanceFalloff = distanceHex <= 3 ? 0
+    : distanceHex <= 7 ? Math.floor(baseDmg / 4)
+      : Math.floor(baseDmg / 2);
+  const armor = armorFor(target, distanceHex);
+  const variance = randomInt(-3, 4);
+  const final = Math.max(1, baseDmg - distanceFalloff - armor + variance);
+  return {
+    Hit: true,
+    HitThreshold: threshold,
+    HitRoll: roll,
+    Damage: final,
+    Detail: `${ship.name} ${weapon} → ${target.name} 命中检定：1D10=${roll} ≤ ${threshold}，命中；`
+      + `伤害 ${baseDmg} - ${distanceFalloff}(距离) - ${armor}(装甲) + ${variance} = ${final}`,
+  };
+}
+
+function resolveGunnery(state, ship, target, radarUsed) {
+  const distanceHex = hexDistance(ship.hex, target.hex);
+  const arc = firingArc(ship.hex, target.hex, ship.facing);
+  const mainArc = arcPowerFor(ship, arc, false) > 0;
+  const secondaryArc = arcPowerFor(ship, arc, true) > 0;
+  if (!mainArc && !secondaryArc) {
+    state.eventLog.push({
+      at: new Date().toISOString(),
+      message: `${ship.name} 炮击 → ${target.name}：主炮/副炮均不在射界内，无法开火`,
+    });
+    return;
+  }
+
+  let totalDamage = 0;
+  let mainHit = false;
+  let secondaryHit = false;
+  if (mainArc) {
+    const check = resolveShotCheck(ship, target, distanceHex, radarUsed, false);
+    state.eventLog.push({ at: new Date().toISOString(), message: check.Detail });
+    if (check.Hit) {
+      mainHit = true;
+      applyShipDamage(state, target, check.Damage);
+      totalDamage += check.Damage;
+    }
+  }
+  if (secondaryArc) {
+    const check = resolveShotCheck(ship, target, distanceHex, radarUsed, true);
+    state.eventLog.push({ at: new Date().toISOString(), message: check.Detail });
+    if (check.Hit) {
+      secondaryHit = true;
+      applyShipDamage(state, target, check.Damage);
+      totalDamage += check.Damage;
+    }
+  }
+
+  let summary;
+  if (mainHit && secondaryHit) {
+    summary = `${ship.name} 主炮与副炮炮击命中 ${target.name}，共造成 ${totalDamage} 点损伤`;
+  } else if (mainHit) {
+    summary = `${ship.name} 主炮炮击命中 ${target.name}，造成 ${totalDamage} 点损伤`;
+  } else if (secondaryHit) {
+    summary = `${ship.name} 副炮炮击命中 ${target.name}，造成 ${totalDamage} 点损伤`;
+  } else {
+    summary = `${ship.name} 炮击跨射散布，炮弹落水！`;
+  }
+  state.eventLog.push({ at: new Date().toISOString(), message: summary });
+}
+
+function applyShipDamage(state, ship, damage) {
+  if (damage <= 0) {
+    return;
+  }
+  ship.hp = Math.max(0, ship.hp - damage);
+  ship.status = ship.hp <= 0 ? 'sunk' : damageStateOf(ship);
+}
+
+function collisionDamage(hullSum, roll) {
+  if (hullSum <= 8) {
+    return Math.max(1, Math.floor(roll / 3));
+  }
+  return Math.max(1, Math.floor(roll / 2));
+}
+
+function addOccupant(occupied, hex, ship) {
+  const key = hex.join(',');
+  if (!occupied.has(key)) {
+    occupied.set(key, []);
+  }
+  if (!occupied.get(key).includes(ship)) {
+    occupied.get(key).push(ship);
+  }
+}
+
+function removeOccupant(occupied, hex, ship) {
+  const key = hex.join(',');
+  const list = occupied.get(key);
+  if (!list) {
+    return;
+  }
+  const index = list.indexOf(ship);
+  if (index !== -1) {
+    list.splice(index, 1);
+  }
+  if (list.length === 0) {
+    occupied.delete(key);
+  }
+}
+
+function canEnterStack(hex, ship, occupied) {
+  const key = hex.join(',');
+  if (key === ship.hex.join(',')) {
+    return true;
+  }
+  const list = occupied.get(key) || [];
+  if (list.length === 0) {
+    return true;
+  }
+  if (list.some((candidate) => candidate.side !== ship.side)) {
+    return false;
+  }
+  return list.length < 2;
+}
+
 function makeShip(side, index) {
   const stats = SHIP_STATS.frigate;
   return {
@@ -98,6 +400,7 @@ function makeShip(side, index) {
     hp: stats.maxHp,
     maxHp: stats.maxHp,
     status: 'intact',
+    ...DEFAULT_COMBAT,
   };
 }
 
@@ -164,6 +467,22 @@ function loadMapShips(db, roomId) {
           hp: stats.maxHp,
           maxHp: stats.maxHp,
           status: 'intact',
+          attackRange: numOr(stats.attackRange, DEFAULT_COMBAT.attackRange),
+          attackPower: numOr(stats.attackPower, DEFAULT_COMBAT.attackPower),
+          mainAmmo: numOr(stats.mainAmmo, DEFAULT_COMBAT.mainAmmo),
+          forwardFire: numOr(stats.forwardFire, DEFAULT_COMBAT.forwardFire),
+          sideFire: numOr(stats.sideFire, DEFAULT_COMBAT.sideFire),
+          backwardFire: numOr(stats.backwardFire, DEFAULT_COMBAT.backwardFire),
+          gunCaliber: numOr(stats.gunCaliber, DEFAULT_COMBAT.gunCaliber),
+          secondaryForwardFire: numOr(stats.secondaryForwardFire, DEFAULT_COMBAT.secondaryForwardFire),
+          secondarySideFire: numOr(stats.secondarySideFire, DEFAULT_COMBAT.secondarySideFire),
+          secondaryBackwardFire: numOr(stats.secondaryBackwardFire, DEFAULT_COMBAT.secondaryBackwardFire),
+          secondaryGunCaliber: numOr(stats.secondaryGunCaliber, DEFAULT_COMBAT.secondaryGunCaliber),
+          secondaryAttackPower: numOr(stats.secondaryAttackPower, DEFAULT_COMBAT.secondaryAttackPower),
+          armorClose: numOr(stats.armorClose, DEFAULT_COMBAT.armorClose),
+          armorMedium: numOr(stats.armorMedium, DEFAULT_COMBAT.armorMedium),
+          armorFar: numOr(stats.armorFar, DEFAULT_COMBAT.armorFar),
+          radarType: stats.radarType || DEFAULT_COMBAT.radarType,
         });
       });
     }
@@ -195,6 +514,22 @@ function loadShipStatsMap(db, roomId) {
         speeds: Array.isArray(entry.speeds) && entry.speeds.length >= 4
           ? entry.speeds
           : [6, 5, 4, 2],
+        attackRange: numOr(entry.attackRange, DEFAULT_COMBAT.attackRange),
+        attackPower: numOr(entry.attackPower, DEFAULT_COMBAT.attackPower),
+        mainAmmo: numOr(entry.mainAmmo, DEFAULT_COMBAT.mainAmmo),
+        forwardFire: numOr(entry.forwardFire, DEFAULT_COMBAT.forwardFire),
+        sideFire: numOr(entry.sideFire, DEFAULT_COMBAT.sideFire),
+        backwardFire: numOr(entry.backwardFire, DEFAULT_COMBAT.backwardFire),
+        gunCaliber: numOr(entry.gunCaliber, DEFAULT_COMBAT.gunCaliber),
+        secondaryForwardFire: numOr(entry.secondaryForwardFire, DEFAULT_COMBAT.secondaryForwardFire),
+        secondarySideFire: numOr(entry.secondarySideFire, DEFAULT_COMBAT.secondarySideFire),
+        secondaryBackwardFire: numOr(entry.secondaryBackwardFire, DEFAULT_COMBAT.secondaryBackwardFire),
+        secondaryGunCaliber: numOr(entry.secondaryGunCaliber, DEFAULT_COMBAT.secondaryGunCaliber),
+        secondaryAttackPower: numOr(entry.secondaryAttackPower, DEFAULT_COMBAT.secondaryAttackPower),
+        armorClose: numOr(entry.armorClose, DEFAULT_COMBAT.armorClose),
+        armorMedium: numOr(entry.armorMedium, DEFAULT_COMBAT.armorMedium),
+        armorFar: numOr(entry.armorFar, DEFAULT_COMBAT.armorFar),
+        radarType: entry.radarType || DEFAULT_COMBAT.radarType,
       };
     }
     return result;
@@ -329,6 +664,23 @@ function recomputeEconomy(state) {
   state.enemyMaxCP = Math.max(1, state.enemyCommand * 2);
   state.playerCP = Math.min(state.playerCP, state.playerMaxCP);
   state.enemyCP = Math.min(state.enemyCP, state.enemyMaxCP);
+}
+
+function applyDeferredSpeedCaps(state) {
+  for (const ship of state.ships) {
+    if (ship.hp <= 0) {
+      continue;
+    }
+    const cap = maxSpeedForState(ship);
+    if (ship.speed > cap) {
+      const old = ship.speed;
+      ship.speed = cap;
+      state.eventLog.push({
+        at: new Date().toISOString(),
+        message: `${ship.name} 因损伤强制降速 ${old} → ${cap}`,
+      });
+    }
+  }
 }
 
 function computeFormations(state) {
@@ -466,9 +818,14 @@ function computeStacking(state) {
 function createState(battle, db) {
   const rollFirst = randomInt(1, 101);
   const rollSecond = randomInt(1, 101);
-  const first = rollFirst >= rollSecond ? battle.players[0] : battle.players[1];
-  const second = battle.players.find((playerId) => playerId !== first);
   const config = loadMapConfig(db, battle.roomId);
+  const initiativeOwner = String(config.InitiativeOwner || '').toLowerCase();
+  const first = initiativeOwner === 'enemy'
+    ? battle.players[1]
+    : initiativeOwner === 'player'
+      ? battle.players[0]
+      : rollFirst >= rollSecond ? battle.players[0] : battle.players[1];
+  const second = battle.players.find((playerId) => playerId !== first);
   const basePlayerCommand = Number(config.PlayerCommand) || 5;
   const baseEnemyCommand = Number(config.EnemyCommand) || 4;
   const playerMaxCP = Math.max(1, basePlayerCommand * 2);
@@ -517,6 +874,7 @@ function createState(battle, db) {
       makeShip(1, 0),
       makeShip(1, 1),
     ],
+    terrain: config.Terrain || {},
     trails: [],
     eventLog: [],
   };
@@ -650,6 +1008,7 @@ export function createBattleStateService({ db, accountService, battleService }) 
     const settledPhase = state.phase;
 
     if (settledPhase === 'gunnery') {
+      applyDeferredSpeedCaps(state);
       state.eventLog.push({
         at: new Date().toISOString(),
         message: `第 ${state.turn} 回合结算完成`,
@@ -724,49 +1083,88 @@ export function createBattleStateService({ db, accountService, battleService }) 
             : action === 'decelerate'
               ? -1
               : 0;
-          ship.speed = clamp(ship.speed + delta, 0, maxSpeedForState(ship));
+          if (delta !== 0) {
+            if (!consumeSideCP(state, ship.side, 1)) {
+              state.eventLog.push({
+                at: new Date().toISOString(),
+                message: `${ship.name} 航速调整被拒绝（CP 不足）`,
+              });
+            } else {
+              ship.speed = clamp(ship.speed + delta, 0, maxSpeedForState(ship));
+            }
+          }
           continue;
         }
 
         if (state.phase.startsWith('move')) {
           let facing = ship.facing;
           if (action === 'turn_left') {
-            facing = (facing + 5) % 6;
-          } else if (action === 'turn_right') {
-            facing = (facing + 1) % 6;
-          }
-            const steps = moveForPhase(ship.speed, phaseNum, oddTurn);
-            const vector = FACING_VECTORS[facing];
-            const path = [[ship.hex[0], ship.hex[1]]];
-            for (let step = 0; step < steps; step++) {
-              const last = path[path.length - 1];
-              path.push([last[0] + vector[0], last[1] + vector[1]]);
+            if (consumeSideCP(state, ship.side, 1)) {
+              facing = (facing + 5) % 6;
+            } else {
+              state.eventLog.push({
+                at: new Date().toISOString(),
+                message: `${ship.name} 左转被拒绝（CP 不足）`,
+              });
             }
-            moves.push({
-              ship,
-              facing,
-              target: path[path.length - 1],
-              path,
-            });
+          } else if (action === 'turn_right') {
+            if (consumeSideCP(state, ship.side, 1)) {
+              facing = (facing + 1) % 6;
+            } else {
+              state.eventLog.push({
+                at: new Date().toISOString(),
+                message: `${ship.name} 右转被拒绝（CP 不足）`,
+              });
+            }
+          }
+          const steps = moveForPhase(ship.speed, phaseNum, oddTurn);
+          const vector = FACING_VECTORS[facing];
+          const path = [[ship.hex[0], ship.hex[1]]];
+          for (let step = 0; step < steps; step++) {
+            const last = path[path.length - 1];
+            path.push([last[0] + vector[0], last[1] + vector[1]]);
+          }
+          moves.push({
+            ship,
+            facing,
+            target: path[path.length - 1],
+            path,
+          });
           continue;
         }
 
         if (state.phase === 'gunnery' && action === 'fire') {
-          const target = state.ships.find(
-            (candidate) => candidate.id === entry.detail.targetShipId,
-          );
+          const targetId = entry.detail && entry.detail.targetShipId;
+          const target = state.ships.find((candidate) => candidate.id === targetId);
           if (target && target.side !== ship.side) {
-            const roll = randomInt(1, 101);
-            const hit = roll <= 70;
-            const damage = hit ? randomInt(1, 5) : 0;
-            if (hit) {
-              target.hp = Math.max(0, target.hp - damage);
-              target.status = target.hp <= 0 ? 'sunk' : 'damaged';
+            if (stateCoeff(ship) <= 0) {
+              state.eventLog.push({
+                at: new Date().toISOString(),
+                message: `${ship.name} 大破/沉没，无法射击`,
+              });
+            } else if (numOr(ship.mainAmmo, 0) <= 0) {
+              state.eventLog.push({
+                at: new Date().toISOString(),
+                message: `${ship.name} 主炮弹药耗尽，无法射击`,
+              });
+            } else if (hexDistance(ship.hex, target.hex) > numOr(ship.attackRange, 4)) {
+              state.eventLog.push({
+                at: new Date().toISOString(),
+                message: `${ship.name} 目标不在射程内，无法射击`,
+              });
+            } else {
+              const cost = tierOf(ship) === 'large' ? 2 : 1;
+              if (!consumeSideCP(state, ship.side, cost)) {
+                state.eventLog.push({
+                  at: new Date().toISOString(),
+                  message: `${ship.name} 炮击被拒绝（CP 不足，需要 ${cost}）`,
+                });
+              } else {
+                ship.mainAmmo = Math.max(0, numOr(ship.mainAmmo, 0) - 1);
+                const radarUsed = Boolean(entry.detail && entry.detail.radarUsed);
+                resolveGunnery(state, ship, target, radarUsed);
+              }
             }
-            state.eventLog.push({
-              at: new Date().toISOString(),
-              message: `${ship.name} 炮击 ${target.name}: d100=${roll} ${hit ? `命中 ${damage} 伤` : '未命中'}`,
-            });
           }
         }
       }
@@ -841,65 +1239,76 @@ export function createBattleStateService({ db, accountService, battleService }) 
     }
 
     if (state.phase.startsWith('move')) {
-      const counts = new Map();
-      for (const move of moves) {
-        const key = move.target.join(',');
-        const count = counts.get(key) || { 0: 0, 1: 0 };
-        count[move.ship.side] += 1;
-        counts.set(key, count);
-      }
-
-        for (const move of moves) {
-          move.ship.facing = move.facing;
-          const count = counts.get(move.target.join(','));
-        const blocked = count[1 - move.ship.side] > 0 || count[move.ship.side] > 2;
-          if (blocked) {
-            state.eventLog.push({
-            at: new Date().toISOString(),
-              message: `${move.ship.name} 移动被阻挡（堆叠上限或敌格）`,
-            });
-            move.ship.lastPath = [[move.ship.hex[0], move.ship.hex[1]]];
-            continue;
-          }
-          move.ship.hex = move.target;
-          move.ship.lastPath = move.path || [[move.ship.hex[0], move.ship.hex[1]]];
+      const occupied = new Map();
+      for (const ship of state.ships) {
+        if (ship.hp > 0) {
+          addOccupant(occupied, ship.hex, ship);
         }
-
-        for (let pass = 0; pass < 3; pass++) {
-          const actual = new Map();
-          for (const ship of state.ships) {
-            const key = `${ship.side}:${ship.hex.join(',')}`;
-            const count = actual.get(key) || { 0: 0, 1: 0 };
-            count[ship.side] += 1;
-            actual.set(key, count);
-          }
-          let violation = false;
-          for (const [key, count] of actual) {
-            if (count[0] > 2 || count[1] > 2) {
-              violation = true;
-              const side = Number(key.split(':')[0]);
-              const hex = key.split(':')[1].split(',').map(Number);
-              const group = state.ships
-                .filter((ship) => ship.side === side && ship.hex[0] === hex[0] && ship.hex[1] === hex[1])
-                .sort((a, b) => (b.stackIndex || 0) - (a.stackIndex || 0));
-              for (const ship of group.slice(2)) {
-                const fallback = oldHex.get(ship.id);
-                if (fallback) {
-                  ship.hex = [...fallback];
-                  ship.lastPath = [[...fallback]];
-                  state.eventLog.push({
-                    at: new Date().toISOString(),
-                    message: `${ship.name} 堆叠超限，退回原格`,
-                  });
-                }
-              }
-            }
-          }
-          if (!violation) {
+      }
+      for (const move of moves) {
+        const ship = move.ship;
+        if (ship.hp <= 0) {
+          continue;
+        }
+        ship.facing = move.facing;
+        const origin = [...ship.hex];
+        const path = move.path && move.path.length > 1 ? move.path : [origin, move.target];
+        let current = origin;
+        let moved = 0;
+        let blockedHex = null;
+        let blockedBy = [];
+        for (let step = 1; step < path.length; step++) {
+          const next = path[step];
+          if (isIsland(state.terrain || {}, next)) {
+            removeOccupant(occupied, current, ship);
+            applyShipDamage(state, ship, ship.hp);
+            state.eventLog.push({
+              at: new Date().toISOString(),
+              message: `${ship.name} 撞击岛屿，直接沉没`,
+            });
             break;
           }
+          blockedBy = occupied.get(next.join(',')) || [];
+          if (!canEnterStack(next, ship, occupied)) {
+            blockedHex = next;
+            break;
+          }
+          removeOccupant(occupied, current, ship);
+          current = next;
+          addOccupant(occupied, current, ship);
+          moved++;
+        }
+        if (blockedHex) {
+          if (blockedBy.length > 0 && randomInt(1, 11) <= 2) {
+            const blocker = blockedBy[0];
+            const hullSum = ship.maxHp + blocker.maxHp;
+            const rollA = randomInt(1, 11);
+            const rollB = randomInt(1, 11);
+            const dmgA = collisionDamage(hullSum, rollA);
+            const dmgB = collisionDamage(hullSum, rollB);
+            state.eventLog.push({
+              at: new Date().toISOString(),
+              message: `${ship.name} 与 ${blocker.name} 发生冲撞！（${rollA}→${dmgA}，${rollB}→${dmgB}）`,
+            });
+            applyShipDamage(state, ship, dmgA);
+            applyShipDamage(state, blocker, dmgB);
+            if (blocker.hp <= 0) {
+              removeOccupant(occupied, blockedHex, blocker);
+            }
+          } else {
+            state.eventLog.push({
+              at: new Date().toISOString(),
+              message: `${ship.name} 前方受阻，仅推进 ${moved} 格`,
+            });
+          }
+        }
+        ship.hex = current;
+        ship.lastPath = path.slice(0, moved + 1);
+        if (ship.hp <= 0) {
+          removeOccupant(occupied, current, ship);
         }
       }
+    }
 
     for (const side of [0, 1]) {
       const alive = state.ships.some(

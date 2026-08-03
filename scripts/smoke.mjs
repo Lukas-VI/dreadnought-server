@@ -148,6 +148,7 @@ const smokeMap = {
   Name: 'smoke_map',
   Version: 3,
   Orientation: 'ew',
+  InitiativeOwner: 'player',
   Terrain: { '0,0': 2, '1,0': 1 },
   Generation: {
     '0,0': { SourceId: 2, Side: 0 },
@@ -168,11 +169,41 @@ const roomWithMap = await request(`/api/lobby/rooms/${room.id}/map`, {
   token: a.token,
   body: smokeMap,
 });
+const combatStats = {
+  dreadnought: {
+    attackRange: 10, attackPower: 40, mainAmmo: 20,
+    forwardFire: 6, sideFire: 9, backwardFire: 3, gunCaliber: 40,
+    secondaryForwardFire: 6, secondarySideFire: 10, secondaryBackwardFire: 6,
+    secondaryGunCaliber: 12, secondaryAttackPower: 20,
+    armorClose: 9, armorMedium: 13, armorFar: 11,
+  },
+  cruiser: {
+    attackRange: 7, attackPower: 15, mainAmmo: 15,
+    forwardFire: 6, sideFire: 15, backwardFire: 6, gunCaliber: 15,
+    secondaryForwardFire: 0, secondarySideFire: 0, secondaryBackwardFire: 0,
+    secondaryGunCaliber: 12, secondaryAttackPower: 0,
+    armorClose: 3, armorMedium: 7, armorFar: 8,
+  },
+  destroyer: {
+    attackRange: 4, attackPower: 12, mainAmmo: 12,
+    forwardFire: 2, sideFire: 5, backwardFire: 2, gunCaliber: 12,
+    secondaryForwardFire: 0, secondarySideFire: 0, secondaryBackwardFire: 0,
+    secondaryGunCaliber: 12, secondaryAttackPower: 0,
+    armorClose: 0, armorMedium: 0, armorFar: 0,
+  },
+  frigate: {
+    attackRange: 4, attackPower: 12, mainAmmo: 12,
+    forwardFire: 2, sideFire: 4, backwardFire: 2, gunCaliber: 12,
+    secondaryForwardFire: 0, secondarySideFire: 0, secondaryBackwardFire: 0,
+    secondaryGunCaliber: 12, secondaryAttackPower: 0,
+    armorClose: 0, armorMedium: 0, armorFar: 0,
+  },
+};
 const uploadedShipData = [
-  { shipId: 'dreadnought', pv: 42, maxHp: 42, shipClass: 'BB', hull: [11, 21, 32, 42], speeds: [5, 5, 3, 2] },
-  { shipId: 'cruiser', pv: 16, maxHp: 18, shipClass: 'CL', hull: [4, 9, 13, 18], speeds: [6, 5, 4, 2] },
-  { shipId: 'destroyer', pv: 6, maxHp: 6, shipClass: 'DD', hull: [2, 3, 5, 6], speeds: [6, 6, 4, 2] },
-  { shipId: 'frigate', pv: 5, maxHp: 4, shipClass: 'DD', hull: [1, 2, 3, 4], speeds: [6, 5, 4, 2] },
+  { shipId: 'dreadnought', pv: 42, maxHp: 42, shipClass: 'BB', hull: [11, 21, 32, 42], speeds: [5, 5, 3, 2], ...combatStats.dreadnought },
+  { shipId: 'cruiser', pv: 16, maxHp: 18, shipClass: 'CL', hull: [4, 9, 13, 18], speeds: [6, 5, 4, 2], ...combatStats.cruiser },
+  { shipId: 'destroyer', pv: 6, maxHp: 6, shipClass: 'DD', hull: [2, 3, 5, 6], speeds: [6, 6, 4, 2], ...combatStats.destroyer },
+  { shipId: 'frigate', pv: 5, maxHp: 4, shipClass: 'DD', hull: [1, 2, 3, 4], speeds: [6, 5, 4, 2], ...combatStats.frigate },
 ];
 await request(`/api/lobby/rooms/${room.id}/shipdata`, {
   method: 'PUT',
@@ -341,6 +372,25 @@ const afterGunnery = await clientB.waitForMessage(
 );
 if (!afterGunnery.state.eventLog.some((entry) => entry.message.includes('炮击'))) {
   throw new Error('gunnery event missing');
+}
+const firedBefore = afterMove3.state.ships.find((ship) => ship.side === firstSide);
+const firedAfter = afterGunnery.state.ships.find((ship) => ship.id === firedBefore.id);
+if (firedAfter.mainAmmo >= firedBefore.mainAmmo) {
+  throw new Error('main ammo not consumed');
+}
+const cpBefore = firstSide === 0 ? afterMove3.state.playerCP : afterMove3.state.enemyCP;
+const cpAfter = firstSide === 0 ? afterGunnery.state.playerCP : afterGunnery.state.enemyCP;
+const fireCost = afterMove3.state.ships
+  .filter((ship) => ship.side === firstSide)
+  .reduce((sum, ship) => sum + (/^(BB|BC)/i.test(ship.shipClass) ? 2 : 1), 0);
+const commandAfter = firstSide === 0 ? afterGunnery.state.playerCommand : afterGunnery.state.enemyCommand;
+const maxAfter = firstSide === 0 ? afterGunnery.state.playerMaxCP : afterGunnery.state.enemyMaxCP;
+const expectedCP = Math.min(
+  cpBefore + commandAfter - fireCost,
+  maxAfter,
+);
+if (cpAfter !== expectedCP) {
+  throw new Error(`cp not consumed: ${cpBefore} -> ${cpAfter}, expected ${expectedCP}, firstSide=${firstSide}, ammo ${firedBefore.mainAmmo} -> ${firedAfter.mainAmmo}`);
 }
 if (afterGunnery.state.turnOrder[0] !== secondId) {
   throw new Error('initiative did not swap after turn end');
