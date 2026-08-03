@@ -115,10 +115,13 @@ Phases and actions:
 
 - `speed`: `accelerate`, `decelerate`, `wait`
 - `move1` / `move2` / `move3`: `turn_left`, `turn_right`, `wait`
+- `recon`: `wait` (night maps; the client auto-submits wait)
 - `gunnery`: `fire` with a `targetShipId`, or `wait`
+- `torpedo`: `wait` (enabled maps; the client auto-submits wait, torpedo play is deferred)
 
-Speed changes and turns cost 1 CP per ship; firing costs 2 CP for
-BB/BC and 1 CP for other classes. The server refuses an action at
+Speed changes and turns cost 1 CP per ship, except a line-ahead formation
+charges once for the whole group; firing costs 2 CP for BB/BC and 1 CP for
+other classes. The server refuses an action at
 settlement when the side has insufficient CP, and reports it in the event
 log. `mainAmmo` is authoritative on the server and decremented on each
 successful fire.
@@ -141,7 +144,8 @@ includes `turnOrder` (first player acts first in the current turn) and
 `activePlayer` (whose command is currently accepted). Initiative is rolled once
 at battle start, then the first-player order swaps at each turn end. If the
 uploaded map defines `InitiativeOwner` (`player` / `enemy`), it is used instead
-of the opening roll.
+of the opening roll. Night maps enter `recon` after the third move phase and
+maps with `TorpedoPhaseEnabled` enter `torpedo` after gunnery.
 
 ## Gacha
 

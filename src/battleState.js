@@ -2,14 +2,28 @@ import { randomBytes, randomInt } from 'node:crypto';
 
 import { httpError } from './httpError.js';
 
-const NEXT_PHASE = {
-  speed: 'move1',
-  move1: 'move2',
-  move2: 'move3',
-  move3: 'gunnery',
-  gunnery: 'settlement',
-  settlement: 'speed',
-};
+function nextPhase(state) {
+  switch (state.phase) {
+    case 'speed':
+      return 'move1';
+    case 'move1':
+      return 'move2';
+    case 'move2':
+      return 'move3';
+    case 'move3':
+      return state.mapType === 'night' ? 'recon' : 'gunnery';
+    case 'recon':
+      return 'gunnery';
+    case 'gunnery':
+      return state.torpedoPhaseEnabled ? 'torpedo' : 'settlement';
+    case 'torpedo':
+      return 'settlement';
+    case 'settlement':
+      return 'speed';
+    default:
+      return 'speed';
+  }
+}
 
 const PHASE_INDEX = {
   speed: 0,
@@ -683,6 +697,56 @@ function applyDeferredSpeedCaps(state) {
   }
 }
 
+function applySpeedPhase(state) {
+  const groups = new Map();
+  for (const playerId of state.turnOrder) {
+    const command = state.commands[playerId] || { ships: [] };
+    const side = state.players.indexOf(playerId);
+    const ships = state.ships.filter((ship) => ship.side === side);
+    for (const ship of ships) {
+      if (ship.hp <= 0) {
+        continue;
+      }
+      const entry = (command.ships || []).find((candidate) => candidate.id === ship.id)
+        || { action: 'wait' };
+      const delta = entry.action === 'accelerate'
+        ? 1
+        : entry.action === 'decelerate'
+          ? -1
+          : 0;
+      if (delta === 0) {
+        continue;
+      }
+      const leadId = ship.formationLeadId && ship.formationLeadId !== ship.id
+        ? ship.formationLeadId
+        : ship.id;
+      const key = `${side}:${leadId}`;
+      if (!groups.has(key)) {
+        groups.set(key, { side, delta: 0, ships: [] });
+      }
+      const group = groups.get(key);
+      if (group.delta === 0) {
+        group.delta = delta;
+      }
+      group.ships.push(ship);
+    }
+  }
+  for (const group of groups.values()) {
+    const accepted = consumeSideCP(state, group.side, 1);
+    if (!accepted) {
+      const ship = group.ships[0];
+      state.eventLog.push({
+        at: new Date().toISOString(),
+        message: `${ship.name} 航速调整被拒绝（CP 不足）`,
+      });
+      continue;
+    }
+    for (const ship of group.ships) {
+      ship.speed = clamp(ship.speed + group.delta, 0, maxSpeedForState(ship));
+    }
+  }
+}
+
 function computeFormations(state) {
   for (const side of [0, 1]) {
     const ships = state.ships.filter((ship) => ship.side === side && ship.hp > 0);
@@ -977,7 +1041,9 @@ export function createBattleStateService({ db, accountService, battleService }) 
       move1: ['turn_left', 'turn_right', 'wait'],
       move2: ['turn_left', 'turn_right', 'wait'],
       move3: ['turn_left', 'turn_right', 'wait'],
+      recon: ['wait'],
       gunnery: ['fire', 'wait'],
+      torpedo: ['wait'],
     };
     for (const entry of command.ships || []) {
       if (!allowed[state.phase] || !allowed[state.phase].includes(entry.action)) {
@@ -1007,42 +1073,27 @@ export function createBattleStateService({ db, accountService, battleService }) 
     state.commands = Object.fromEntries(state.players.map((playerId) => [playerId, null]));
     const settledPhase = state.phase;
 
-    if (settledPhase === 'gunnery') {
-      applyDeferredSpeedCaps(state);
-      state.eventLog.push({
-        at: new Date().toISOString(),
-        message: `第 ${state.turn} 回合结算完成`,
-      });
-      if (state.mapType === 'night') {
-        state.eventLog.push({
-          at: new Date().toISOString(),
-          message: '夜战地图：视野阶段由服务端自动跳过',
-        });
+    const finishTurn = () => {
+      if (state.status !== 'active') {
+        markRoomFinished(state);
+        return;
       }
-      if (state.torpedoPhaseEnabled) {
-        state.eventLog.push({
-          at: new Date().toISOString(),
-          message: '鱼雷阶段已启用：当前由服务端自动跳过',
-        });
-      }
-      if (state.status !== 'active' || state.turn >= state.maxTurns) {
-        if (state.status === 'active') {
-          state.status = 'finished';
-          markRoomFinished(state);
-          if (state.playerScore > state.enemyScore) {
-            state.winner = state.players[0];
-          } else if (state.enemyScore > state.playerScore) {
-            state.winner = state.players[1];
-          } else {
-            state.winner = null;
-          }
-          state.eventLog.push({
-            at: new Date().toISOString(),
-            message: state.winner
-              ? `回合上限到达，${state.winner} 以 PV 获胜`
-              : '回合上限到达，双方 PV 平局',
-          });
+      if (state.turn >= state.maxTurns) {
+        state.status = 'finished';
+        markRoomFinished(state);
+        if (state.playerScore > state.enemyScore) {
+          state.winner = state.players[0];
+        } else if (state.enemyScore > state.playerScore) {
+          state.winner = state.players[1];
+        } else {
+          state.winner = null;
         }
+        state.eventLog.push({
+          at: new Date().toISOString(),
+          message: state.winner
+            ? `回合上限到达，${state.winner} 以 PV 获胜`
+            : '回合上限到达，双方 PV 平局',
+        });
         return;
       }
       state.turn += 1;
@@ -1054,8 +1105,43 @@ export function createBattleStateService({ db, accountService, battleService }) 
         at: new Date().toISOString(),
         message: `第 ${state.turn} 回合，先手权交换`,
       });
+    };
+
+    if (settledPhase === 'gunnery') {
+      applyDeferredSpeedCaps(state);
+      state.eventLog.push({
+        at: new Date().toISOString(),
+        message: `第 ${state.turn} 回合炮击结算完成`,
+      });
+      if (state.mapType === 'night') {
+        state.eventLog.push({
+          at: new Date().toISOString(),
+          message: '夜战地图：视野阶段已自动待命',
+        });
+      }
+      if (state.torpedoPhaseEnabled && state.status === 'active') {
+        state.phase = nextPhase(state);
+        state.eventLog.push({
+          at: new Date().toISOString(),
+          message: `进入阶段 ${state.phase}（鱼雷玩法后推，当前自动待命）`,
+        });
+      } else {
+        finishTurn();
+      }
+    } else if (settledPhase === 'recon') {
+      state.eventLog.push({
+        at: new Date().toISOString(),
+        message: '视野阶段完成（双方自动待命）',
+      });
+      state.phase = 'gunnery';
+    } else if (settledPhase === 'torpedo') {
+      state.eventLog.push({
+        at: new Date().toISOString(),
+        message: '鱼雷阶段完成（双方自动待命）',
+      });
+      finishTurn();
     } else {
-      state.phase = NEXT_PHASE[state.phase];
+      state.phase = nextPhase(state);
       state.eventLog.push({
         at: new Date().toISOString(),
         message: `进入阶段 ${state.phase}`,
@@ -1069,6 +1155,11 @@ export function createBattleStateService({ db, accountService, battleService }) 
     const oldHex = new Map(state.ships.map((ship) => [ship.id, [...ship.hex]]));
     const phaseNum = state.phase === 'move1' ? 1 : state.phase === 'move2' ? 2 : 3;
     const oddTurn = state.turn % 2 === 1;
+    if (state.phase === 'speed') {
+      computeFormations(state);
+      applySpeedPhase(state);
+      return;
+    }
     for (const playerId of state.turnOrder) {
       const command = state.commands[playerId];
       const playerSide = state.players.indexOf(playerId);
@@ -1077,40 +1168,23 @@ export function createBattleStateService({ db, accountService, battleService }) 
         const entry = (command.ships || []).find((candidate) => candidate.id === ship.id)
           || { action: 'wait', detail: null };
         const action = entry.action || 'wait';
-        if (state.phase === 'speed') {
-          const delta = action === 'accelerate'
-            ? 1
-            : action === 'decelerate'
-              ? -1
-              : 0;
-          if (delta !== 0) {
-            if (!consumeSideCP(state, ship.side, 1)) {
-              state.eventLog.push({
-                at: new Date().toISOString(),
-                message: `${ship.name} 航速调整被拒绝（CP 不足）`,
-              });
-            } else {
-              ship.speed = clamp(ship.speed + delta, 0, maxSpeedForState(ship));
-            }
-          }
-          continue;
-        }
 
         if (state.phase.startsWith('move')) {
           let facing = ship.facing;
+          const isFollower = ship.formationLeadId && ship.formationLeadId !== ship.id;
           if (action === 'turn_left') {
-            if (consumeSideCP(state, ship.side, 1)) {
+            if (isFollower || consumeSideCP(state, ship.side, 1)) {
               facing = (facing + 5) % 6;
-            } else {
+            } else if (!isFollower) {
               state.eventLog.push({
                 at: new Date().toISOString(),
                 message: `${ship.name} 左转被拒绝（CP 不足）`,
               });
             }
           } else if (action === 'turn_right') {
-            if (consumeSideCP(state, ship.side, 1)) {
+            if (isFollower || consumeSideCP(state, ship.side, 1)) {
               facing = (facing + 1) % 6;
-            } else {
+            } else if (!isFollower) {
               state.eventLog.push({
                 at: new Date().toISOString(),
                 message: `${ship.name} 右转被拒绝（CP 不足）`,

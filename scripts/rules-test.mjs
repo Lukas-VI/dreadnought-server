@@ -91,14 +91,18 @@ const map = {
   Name: 'rules_island',
   Version: 3,
   Orientation: 'ew',
+  MapType: 'night',
+  TorpedoPhaseEnabled: true,
   InitiativeOwner: 'enemy',
-  Terrain: { '0,0': 2, '0,-1': 1, '-4,0': 2 },
+  Terrain: { '0,0': 2, '0,-1': 1, '2,0': 2, '-4,0': 2 },
   Generation: {
     '0,0': { SourceId: 2, Side: 0 },
+    '2,0': { SourceId: 2, Side: 0 },
     '-4,0': { SourceId: 2, Side: 1 },
   },
   Ships: {
     '0,0': [{ ShipId: 'frigate', Direction: 'N', Speed: 1 }],
+    '2,0': [{ ShipId: 'frigate', Direction: 'N', Speed: 1 }],
     '-4,0': [{ ShipId: 'frigate', Direction: 'S', Speed: 1 }],
   },
 };
@@ -139,7 +143,7 @@ if (initial.state.activePlayer !== b.user.id) {
 
 const clients = { [a.user.id]: clientA, [b.user.id]: clientB };
 const waitAll = (state, side) => state.ships
-  .filter((ship) => ship.side === side)
+  .filter((ship) => ship.side === side && ship.hp > 0)
   .map((ship) => ({ id: ship.id, action: 'wait' }));
 const submit = (playerId, ships) => clients[playerId].send({
   type: 'battle.command',
@@ -162,9 +166,47 @@ const afterMove1 = await clientA.waitForMessage(
   (m) => m.type === 'battle.state' && m.state.phase === 'move2',
 );
 
-const playerShip = afterMove1.state.ships.find((ship) => ship.side === 0);
+const playerShip = afterMove1.state.ships.find((ship) => ship.side === 0 && ship.hex.join(',') === '0,0');
 if (playerShip.hp !== 0 || playerShip.hex.join(',') !== '0,0' || playerShip.status !== 'sunk') {
   throw new Error(`island sink failed: ${JSON.stringify(playerShip)}`);
+}
+
+const advanceBoth = async (fromState, nextPhase, turn) => {
+  const state = fromState.state || fromState;
+  submit(firstId, waitAll(state, state.players.indexOf(firstId)));
+  const firstResult = await clients[firstId].waitForMessage(
+    (m) => m.type === 'error'
+      || (m.type === 'battle.state' && m.state.phase === state.phase && m.state.activePlayer === secondId),
+  );
+  if (firstResult.type === 'error') {
+    throw new Error(`first submit failed: ${firstResult.code}`);
+  }
+  submit(secondId, waitAll(state, state.players.indexOf(secondId)));
+  const secondResult = await clients[secondId].waitForMessage(
+    (m) => m.type === 'error'
+      || (m.type === 'battle.state'
+        && m.state.phase === nextPhase
+        && (turn == null || m.state.turn === turn)),
+  );
+  if (secondResult.type === 'error') {
+    throw new Error(`second submit failed: ${secondResult.code}`);
+  }
+  return secondResult;
+};
+
+const afterMove2 = await advanceBoth(afterMove1, 'move3');
+const afterMove3 = await advanceBoth(afterMove2, 'recon');
+const afterRecon = await advanceBoth(afterMove3, 'gunnery');
+if (!afterRecon.state.eventLog.some((entry) => entry.message.includes('视野阶段完成'))) {
+  throw new Error('night recon phase not entered');
+}
+const afterGunnery = await advanceBoth(afterRecon, 'torpedo');
+const afterTorpedo = await advanceBoth(afterGunnery, 'speed', 2);
+if (!afterTorpedo.state.eventLog.some((entry) => entry.message.includes('鱼雷阶段完成'))) {
+  throw new Error('torpedo phase not entered');
+}
+if (afterTorpedo.state.turnOrder[0] === firstId) {
+  throw new Error('turn order did not swap after torpedo phase');
 }
 
 clientA.close();
@@ -172,5 +214,7 @@ clientB.close();
 console.log(JSON.stringify({
   initiative: 'map-owner',
   island: 'sunk-in-place',
+  recon: 'entered',
+  torpedo: 'entered',
   battle: battle.id,
 }, null, 2));
