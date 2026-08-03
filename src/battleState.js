@@ -302,14 +302,65 @@ function recomputeEconomy(state) {
 function computeFormations(state) {
   for (const side of [0, 1]) {
     const ships = state.ships.filter((ship) => ship.side === side && ship.hp > 0);
+    const previousGroups = new Map();
+    for (const ship of ships) {
+      if (!ship.formationLeadId) {
+        continue;
+      }
+      if (!previousGroups.has(ship.formationLeadId)) {
+        previousGroups.set(ship.formationLeadId, {
+          leadWasSelf: ship.formationLeadId === ship.id,
+          members: [],
+        });
+      }
+      previousGroups.get(ship.formationLeadId).members.push({
+        id: ship.id,
+        index: ship.formationIndex,
+      });
+    }
+
     for (const ship of ships) {
       ship.formationLeadId = null;
       ship.formationIndex = -1;
     }
 
-    const ungrouped = new Set(ships);
+    const used = new Set();
+    for (const [leadId, group] of previousGroups) {
+      if (!group.leadWasSelf) {
+        continue;
+      }
+      const lead = ships.find((ship) => ship.id === leadId);
+      if (!lead) {
+        continue;
+      }
+      const ordered = group.members
+        .sort((a, b) => a.index - b.index)
+        .map((member) => ships.find((ship) => ship.id === member.id))
+        .filter(Boolean);
+      if (ordered.length < 2) {
+        continue;
+      }
+      let adjacent = true;
+      for (let i = 1; i < ordered.length; i++) {
+        if (hexDistance(ordered[i - 1].hex, ordered[i].hex) > 1) {
+          adjacent = false;
+          break;
+        }
+      }
+      if (!adjacent) {
+        continue;
+      }
+      ordered.forEach((ship, index) => {
+        ship.formationLeadId = lead.id;
+        ship.formationIndex = index;
+        used.add(ship.id);
+      });
+    }
+
+    const remaining = ships.filter((ship) => !used.has(ship.id));
+    const ungrouped = new Set(remaining);
     for (const lead of ships) {
-      if (!ungrouped.has(lead)) {
+      if (!remaining.includes(lead) || !ungrouped.has(lead)) {
         continue;
       }
       const cells = new Map();
