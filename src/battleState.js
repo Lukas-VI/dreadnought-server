@@ -767,6 +767,15 @@ export function createBattleStateService({ db, accountService, battleService }) 
         const shipById = new Map(state.ships.map((ship) => [ship.id, ship]));
         for (let i = 1; i < group.length; i++) {
           const follower = group[i];
+          const aheadMove = group[i - 1];
+          const from = oldHex.get(follower.ship.id);
+          const aheadFrom = oldHex.get(aheadMove.ship.id);
+          if (from && aheadFrom && from[0] === aheadFrom[0] && from[1] === aheadFrom[1]) {
+            follower.path = aheadMove.path.map((hex) => [...hex]);
+            follower.target = [...aheadMove.target];
+            follower.facing = aheadMove.facing;
+            continue;
+          }
           const aheadShip = shipById.get(group[i - 1].ship.id);
           const aheadPath = aheadShip &&
             Array.isArray(aheadShip.lastPath) &&
