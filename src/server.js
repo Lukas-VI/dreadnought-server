@@ -73,6 +73,11 @@ async function handleRequest(req, res) {
       return;
     }
 
+    if (req.method === 'GET' && path === '/api/time') {
+      sendJson(res, 200, { serverTime: Date.now() });
+      return;
+    }
+
     if (req.method === 'POST' && path === '/api/auth/register') {
       const body = await readJson(req);
       sendJson(res, 201, accountService.register(body));

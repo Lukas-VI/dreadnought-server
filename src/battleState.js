@@ -37,6 +37,32 @@ const SHIP_STATS = {
   frigate: { pv: 5, maxHp: 4, shipClass: 'DD', hull: [1, 2, 3, 4], speeds: [6, 5, 4, 2] },
 };
 
+const SPEED_TABLE = [
+  { p1: 0, p2: 0, p3: 0 },
+  { p1: 0, p2: 0, p3: 0, alternate: true },
+  { p1: 1, p2: 0, p3: 0 },
+  { p1: 1, p2: 1, p3: 0 },
+  { p1: 1, p2: 1, p3: 0 },
+  { p1: 1, p2: 1, p3: 1 },
+  { p1: 2, p2: 1, p3: 1 },
+  { p1: 2, p2: 2, p3: 1 },
+  { p1: 2, p2: 2, p3: 2 },
+];
+
+function moveForPhase(speed, phase, oddTurn) {
+  const entry = SPEED_TABLE[Math.max(0, Math.min(8, speed))] || SPEED_TABLE[0];
+  const base = phase === 1 ? entry.p1 : phase === 2 ? entry.p2 : entry.p3;
+  if (entry.alternate && oddTurn && phase === 1) {
+    return Math.max(base, 1);
+  }
+  return base;
+}
+
+function facingFromOffset(dx, dy) {
+  const index = FACING_VECTORS.findIndex((v) => v[0] === dx && v[1] === dy);
+  return index === -1 ? 0 : index;
+}
+
 function addHex(a, b) {
   return [a[0] + b[0], a[1] + b[1]];
 }
@@ -61,6 +87,8 @@ function makeShip(side, index) {
     speeds: stats.speeds,
     formationLeadId: null,
     formationIndex: -1,
+    stackIndex: 0,
+    stackTotal: 1,
     side,
     hex: side === 0 ? [2 - index, 0] : [-2 + index, 0],
     facing: side === 0 ? 0 : 3,
@@ -124,6 +152,8 @@ function loadMapShips(db, roomId) {
           speeds: stats.speeds,
           formationLeadId: null,
           formationIndex: -1,
+          stackIndex: 0,
+          stackTotal: 1,
           side,
           hex: [q, r],
           facing,
@@ -414,6 +444,23 @@ function computeFormations(state) {
   }
 }
 
+function computeStacking(state) {
+  const groups = new Map();
+  for (const ship of state.ships) {
+    const key = `${ship.side}:${ship.hex.join(',')}`;
+    if (!groups.has(key)) {
+      groups.set(key, []);
+    }
+    groups.get(key).push(ship);
+  }
+  for (const group of groups.values()) {
+    group.forEach((ship, index) => {
+      ship.stackIndex = index;
+      ship.stackTotal = group.length;
+    });
+  }
+}
+
 function createState(battle, db) {
   const rollFirst = randomInt(1, 101);
   const rollSecond = randomInt(1, 101);
@@ -453,6 +500,8 @@ function createState(battle, db) {
     timerRemaining: 0,
     timerTotal: 0,
     timerActivePlayer: null,
+    timerStartAt: 0,
+    timerEndAt: 0,
     turnOrder: [first, second],
     activePlayer: first,
     initiative: {
@@ -500,6 +549,7 @@ export function createBattleStateService({ db, accountService, battleService }) 
       return loaded;
     }
     const state = createState(battle, db);
+    computeStacking(state);
     states.set(battle.id, state);
     persist(state);
     return state;
@@ -531,6 +581,8 @@ export function createBattleStateService({ db, accountService, battleService }) 
       timerRemaining: state.timerRemaining,
       timerTotal: state.timerTotal,
       timerActivePlayer: state.timerActivePlayer,
+      timerStartAt: state.timerStartAt,
+      timerEndAt: state.timerEndAt,
       commands: Object.fromEntries(
         Object.entries(state.commands).map(([playerId, command]) => [
           playerId,
@@ -582,6 +634,7 @@ export function createBattleStateService({ db, accountService, battleService }) 
 
   function settle(state) {
     applyPhase(state);
+    computeStacking(state);
     computeFormations(state);
     state.commands = Object.fromEntries(state.players.map((playerId) => [playerId, null]));
     const settledPhase = state.phase;
@@ -631,6 +684,9 @@ export function createBattleStateService({ db, accountService, battleService }) 
 
   function applyPhase(state) {
     const moves = [];
+    const oldHex = new Map(state.ships.map((ship) => [ship.id, [...ship.hex]]));
+    const phaseNum = state.phase === 'move1' ? 1 : state.phase === 'move2' ? 2 : 3;
+    const oddTurn = state.turn % 2 === 1;
     for (const playerId of state.turnOrder) {
       const command = state.commands[playerId];
       const playerSide = state.players.indexOf(playerId);
@@ -656,10 +712,15 @@ export function createBattleStateService({ db, accountService, battleService }) 
           } else if (action === 'turn_right') {
             facing = (facing + 1) % 6;
           }
+          const steps = moveForPhase(ship.speed, phaseNum, oddTurn);
+          const vector = FACING_VECTORS[facing];
           moves.push({
             ship,
             facing,
-            target: addHex(ship.hex, FACING_VECTORS[facing]),
+            target: [
+              ship.hex[0] + vector[0] * steps,
+              ship.hex[1] + vector[1] * steps,
+            ],
           });
           continue;
         }
@@ -682,6 +743,34 @@ export function createBattleStateService({ db, accountService, battleService }) 
             });
           }
         }
+      }
+    }
+
+    const formationGroups = new Map();
+    for (const move of moves) {
+      const leadId = move.ship.formationLeadId;
+      if (!leadId) {
+        continue;
+      }
+      if (!formationGroups.has(leadId)) {
+        formationGroups.set(leadId, []);
+      }
+      formationGroups.get(leadId).push(move);
+    }
+    for (const group of formationGroups.values()) {
+      group.sort((a, b) => a.ship.formationIndex - b.ship.formationIndex);
+      for (let i = 1; i < group.length; i++) {
+        const aheadOld = oldHex.get(group[i - 1].ship.id);
+        const follower = group[i];
+        if (!aheadOld) {
+          continue;
+        }
+        follower.target = [...aheadOld];
+        const from = oldHex.get(follower.ship.id);
+        follower.facing = facingFromOffset(
+          follower.target[0] - from[0],
+          follower.target[1] - from[1],
+        );
       }
     }
 
@@ -755,6 +844,8 @@ export function createBattleStateService({ db, accountService, battleService }) 
     if (state.status !== 'active' || PHASE_INDEX[state.phase] == null) {
       state.timerRemaining = 0;
       state.timerTotal = 0;
+      state.timerStartAt = 0;
+      state.timerEndAt = 0;
       return;
     }
     const phaseIndex = PHASE_INDEX[state.phase];
@@ -764,6 +855,8 @@ export function createBattleStateService({ db, accountService, battleService }) 
     const total = Math.max(1, perShip * count + (Number(state.phaseExtra) || 5));
     state.timerRemaining = total;
     state.timerTotal = total;
+    state.timerStartAt = Date.now();
+    state.timerEndAt = state.timerStartAt + total * 1000;
     const battleId = state.id;
     timers.set(battleId, {
       remaining: total,
@@ -773,7 +866,7 @@ export function createBattleStateService({ db, accountService, battleService }) 
         if (!entry) {
           return;
         }
-        entry.remaining = Math.max(0, entry.remaining - 1);
+        entry.remaining = Math.max(0, Math.round((state.timerEndAt - Date.now()) / 1000));
         state.timerRemaining = entry.remaining;
         persist(state);
         if (broadcastState) {
