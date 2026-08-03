@@ -8,7 +8,8 @@
     "smoke": "node scripts/smoke.mjs",
     "snake": "node scripts/snake-test.mjs",
     "rules": "node scripts/rules-test.mjs",
-    "reconnect": "node scripts/reconnect-test.mjs"
+    "reconnect": "node scripts/reconnect-test.mjs",
+    "admin": "node scripts/admin-test.mjs"
   },
   "engines": {
     "node": ">=18"

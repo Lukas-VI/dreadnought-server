@@ -1,0 +1,586 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Dreadnought 管理后台</title>
+<style>
+:root {
+  --bg: #0b0f17;
+  --panel: #121a28;
+  --panel2: #182338;
+  --line: #233149;
+  --text: #e6edf7;
+  --muted: #8ea2bf;
+  --accent: #3ec6a0;
+  --warn: #f2b85c;
+  --danger: #e96a6a;
+  --info: #6aa9ff;
+}
+* { box-sizing: border-box; }
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--text);
+  font: 14px/1.5 "Microsoft YaHei", system-ui, sans-serif;
+}
+button, input {
+  font: inherit;
+}
+button {
+  border: 1px solid var(--line);
+  background: var(--panel2);
+  color: var(--text);
+  padding: 7px 14px;
+  border-radius: 6px;
+  cursor: pointer;
+}
+button:hover { border-color: var(--accent); }
+button.danger { color: var(--danger); }
+input {
+  background: #0d1420;
+  border: 1px solid var(--line);
+  color: var(--text);
+  padding: 8px 10px;
+  border-radius: 6px;
+  outline: none;
+}
+input:focus { border-color: var(--accent); }
+.layout { display: flex; min-height: 100vh; }
+.sidebar {
+  width: 210px;
+  background: var(--panel);
+  border-right: 1px solid var(--line);
+  padding: 18px 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  position: sticky;
+  top: 0;
+  height: 100vh;
+}
+.brand { font-size: 18px; font-weight: 700; margin-bottom: 10px; }
+.brand small { color: var(--muted); font-weight: 400; }
+.nav-btn {
+  text-align: left;
+  background: transparent;
+  border-color: transparent;
+  border-radius: 8px;
+  color: var(--muted);
+}
+.nav-btn.active { background: var(--panel2); color: var(--text); border-color: var(--line); }
+.main { flex: 1; padding: 22px; overflow: auto; }
+.login-wrap {
+  min-height: 100vh;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.login-card {
+  width: 380px;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  padding: 28px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+.login-card h1 { margin: 0 0 4px; font-size: 22px; }
+.login-card input { width: 100%; }
+.status { color: var(--warn); min-height: 20px; }
+.topbar {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 18px;
+}
+.cards {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  gap: 12px;
+  margin-bottom: 18px;
+}
+.card {
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 14px;
+}
+.card .label { color: var(--muted); font-size: 12px; }
+.card .value { font-size: 26px; font-weight: 700; margin-top: 4px; }
+.card.accent .value { color: var(--accent); }
+.card.warn .value { color: var(--warn); }
+.card.danger .value { color: var(--danger); }
+.section {
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 16px;
+  margin-bottom: 16px;
+}
+.section h2 { margin: 0 0 12px; font-size: 16px; }
+.charts { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 12px; }
+.chart-box { background: var(--panel2); border-radius: 8px; padding: 12px; }
+.chart-box h3 { margin: 0 0 10px; font-size: 13px; color: var(--muted); }
+.bars { display: flex; align-items: flex-end; gap: 4px; height: 110px; }
+.bar {
+  flex: 1;
+  min-width: 4px;
+  background: var(--info);
+  border-radius: 2px 2px 0 0;
+  opacity: .9;
+}
+.bar.warn { background: var(--warn); }
+.bar.accent { background: var(--accent); }
+.bar.danger { background: var(--danger); }
+.table-wrap { overflow: auto; }
+table { width: 100%; border-collapse: collapse; }
+th, td { text-align: left; padding: 8px 10px; border-bottom: 1px solid var(--line); white-space: nowrap; }
+th { color: var(--muted); font-weight: 500; }
+tr:hover td { background: rgba(62,198,160,.04); }
+.pill {
+  display: inline-block;
+  padding: 2px 8px;
+  border-radius: 999px;
+  font-size: 12px;
+  background: var(--panel2);
+  border: 1px solid var(--line);
+}
+.pill.ok { color: var(--accent); border-color: var(--accent); }
+.pill.bad { color: var(--danger); border-color: var(--danger); }
+.pill.admin { color: var(--warn); border-color: var(--warn); }
+.toolbar { display: flex; gap: 8px; margin-bottom: 12px; flex-wrap: wrap; }
+.muted { color: var(--muted); }
+@media (max-width: 760px) {
+  .layout { flex-direction: column; }
+  .sidebar { width: 100%; height: auto; position: static; flex-direction: row; flex-wrap: wrap; }
+  .main { padding: 12px; }
+}
+</style>
+</head>
+<body>
+<div id="app"></div>
+<script>
+const state = {
+  token: localStorage.getItem('dn_admin_token') || '',
+  tab: 'overview',
+  usersPage: 1,
+  usersSearch: '',
+};
+
+function escapeHtml(value) {
+  return String(value == null ? '' : value)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;');
+}
+
+async function api(path, options = {}) {
+  const headers = { 'content-type': 'application/json' };
+  if (state.token) headers.authorization = `Bearer ${state.token}`;
+  const response = await fetch(path, { ...options, headers });
+  const text = await response.text();
+  let payload = {};
+  try { payload = text ? JSON.parse(text) : {}; } catch {}
+  if (!response.ok) {
+    throw new Error(payload.error || `http_${response.status}`);
+  }
+  return payload;
+}
+
+function renderLogin() {
+  const app = document.getElementById('app');
+  app.innerHTML = `
+    <div class="login-wrap">
+      <form class="login-card" onsubmit="doLogin(event)">
+        <h1>Dreadnought Admin</h1>
+        <div class="muted">服务端运营后台 · 可视化数据大屏</div>
+        <input id="login-email" type="email" placeholder="管理员邮箱" required>
+        <input id="login-password" type="password" placeholder="密码" required>
+        <button type="submit">登录</button>
+        <div class="status" id="login-status"></div>
+      </form>
+    </div>`;
+}
+
+async function doLogin(event) {
+  event.preventDefault();
+  const status = document.getElementById('login-status');
+  status.textContent = '登录中...';
+  try {
+    const result = await api('/api/auth/login', {
+      method: 'POST',
+      body: JSON.stringify({
+        email: document.getElementById('login-email').value.trim(),
+        password: document.getElementById('login-password').value,
+      }),
+    });
+    const me = await api('/api/me', { headers: { authorization: `Bearer ${result.token}` } });
+    if (me.role !== 'admin') {
+      status.textContent = '该账号不是管理员';
+      return;
+    }
+    state.token = result.token;
+    localStorage.setItem('dn_admin_token', state.token);
+    enterApp();
+  } catch (err) {
+    status.textContent = `登录失败：${err.message}`;
+  }
+}
+
+function enterApp() {
+  const app = document.getElementById('app');
+  app.innerHTML = `
+    <div class="layout">
+      <aside class="sidebar">
+        <div class="brand">Dreadnought<small> · 管理后台</small></div>
+        ${['overview', 'users', 'rooms', 'battles', 'sessions', 'logs'].map((tab) => `
+          <button class="nav-btn ${tab === state.tab ? 'active' : ''}" data-tab="${tab}">
+            ${tabLabel(tab)}
+          </button>`).join('')}
+        <div style="flex:1"></div>
+        <button onclick="logout()">退出登录</button>
+      </aside>
+      <main class="main" id="main"></main>
+    </div>`;
+  document.querySelectorAll('.nav-btn').forEach((button) => {
+    button.addEventListener('click', () => {
+      state.tab = button.dataset.tab;
+      document.querySelectorAll('.nav-btn').forEach((btn) => btn.classList.toggle('active', btn === button));
+      loadTab();
+    });
+  });
+  loadTab();
+  setInterval(() => {
+    if (state.tab === 'overview') loadTab();
+  }, 5000);
+}
+
+function tabLabel(tab) {
+  return { overview: '数据总览', users: '账号管理', rooms: '房间管理', battles: '战斗管理', sessions: '会话管理', logs: '操作日志' }[tab] || tab;
+}
+
+async function loadTab() {
+  const main = document.getElementById('main');
+  if (!main) return;
+  try {
+    if (state.tab === 'overview') await loadOverview(main);
+    else if (state.tab === 'users') await loadUsers(main);
+    else if (state.tab === 'rooms') await loadRooms(main);
+    else if (state.tab === 'battles') await loadBattles(main);
+    else if (state.tab === 'sessions') await loadSessions(main);
+    else if (state.tab === 'logs') await loadLogs(main);
+  } catch (err) {
+    main.innerHTML = `<div class="status">加载失败：${escapeHtml(err.message)}</div>`;
+    if (String(err.message).includes('invalid_token') || String(err.message).includes('admin_required')) {
+      logout();
+    }
+  }
+}
+
+function card(label, value, cls = '') {
+  return `<div class="card ${cls}"><div class="label">${label}</div><div class="value">${value}</div></div>`;
+}
+
+function barsHtml(series, cls) {
+  const max = Math.max(1, ...series.map((item) => item.count));
+  return `<div class="bars">${series.map((item) => `
+    <div class="bar ${cls}" style="height:${Math.max(2, Math.round(item.count / max * 100))}%"
+         title="${item.day} ${item.count}"></div>`).join('')}</div>`;
+}
+
+async function loadOverview(main) {
+  const data = await api('/api/admin/overview');
+  const stats = data.stats;
+  main.innerHTML = `
+    <div class="topbar"><h1>数据总览</h1><div class="muted">自动刷新 5s</div></div>
+    <div class="cards">
+      ${card('注册用户', stats.users, 'accent')}
+      ${card('管理员', stats.admins)}
+      ${card('封禁账号', stats.banned, 'danger')}
+      ${card('累计点数', stats.credits, 'accent')}
+      ${card('房间', stats.rooms)}
+      ${card('战斗', stats.battles)}
+      ${card('进行中', stats.activeBattles, 'warn')}
+      ${card('会话', stats.sessions)}
+      ${card('骰值记录', stats.rolls)}
+      ${card('抽卡记录', stats.pulls)}
+    </div>
+    <div class="section">
+      <h2>近 14 天趋势</h2>
+      <div class="charts">
+        <div class="chart-box"><h3>注册用户</h3>${barsHtml(data.daily.users, '')}</div>
+        <div class="chart-box"><h3>战斗</h3>${barsHtml(data.daily.battles, 'accent')}</div>
+        <div class="chart-box"><h3>骰值</h3>${barsHtml(data.daily.rolls, 'warn')}</div>
+        <div class="chart-box"><h3>抽卡</h3>${barsHtml(data.daily.pulls, 'danger')}</div>
+      </div>
+    </div>
+    <div class="section">
+      <h2>最新用户</h2>
+      ${usersTable(data.users)}
+    </div>
+    <div class="section">
+      <h2>最新房间</h2>
+      ${roomsTable(data.rooms)}
+    </div>
+    <div class="section">
+      <h2>最新战斗</h2>
+      ${battlesTable(data.battles)}
+    </div>`;
+}
+
+function usersTable(users) {
+  return `<div class="table-wrap"><table>
+    <tr><th>用户名</th><th>邮箱</th><th>角色</th><th>状态</th><th>点数</th><th>会话</th><th>注册时间</th></tr>
+    ${(users || []).map((u) => `<tr>
+      <td>${escapeHtml(u.username)}</td>
+      <td>${escapeHtml(u.email)}</td>
+      <td><span class="pill ${u.role === 'admin' ? 'admin' : ''}">${u.role}</span></td>
+      <td>${u.banned ? '<span class="pill bad">封禁</span>' : '<span class="pill ok">正常</span>'}</td>
+      <td>${u.credits}</td>
+      <td>${u.session_count || 0}</td>
+      <td>${escapeHtml((u.created_at || '').slice(0, 19).replace('T', ' '))}</td>
+    </tr>`).join('')}
+  </table></div>`;
+}
+
+function roomsTable(rooms) {
+  return `<div class="table-wrap"><table>
+    <tr><th>房间</th><th>状态</th><th>房主</th><th>人数</th><th>战斗</th><th>创建时间</th></tr>
+    ${(rooms || []).map((room) => `<tr>
+      <td>${escapeHtml(room.id)}</td>
+      <td><span class="pill">${escapeHtml(room.status)}</span></td>
+      <td>${escapeHtml(room.owner_name || '-')}</td>
+      <td>${room.player_count}</td>
+      <td>${room.battle_count}</td>
+      <td>${escapeHtml((room.created_at || '').slice(0, 19).replace('T', ' '))}</td>
+    </tr>`).join('')}
+  </table></div>`;
+}
+
+function battlesTable(battles) {
+  return `<div class="table-wrap"><table>
+    <tr><th>战斗</th><th>房间</th><th>状态</th><th>回合</th><th>阶段</th><th>开始时间</th></tr>
+    ${(battles || []).map((b) => `<tr>
+      <td>${escapeHtml(b.id)}</td>
+      <td>${escapeHtml(b.room_id)}</td>
+      <td><span class="pill ${b.status === 'active' ? 'warn' : 'ok'}">${escapeHtml(b.status)}</span></td>
+      <td>${b.turn}</td>
+      <td>${escapeHtml(b.phase)}</td>
+      <td>${escapeHtml((b.started_at || '').slice(0, 19).replace('T', ' '))}</td>
+    </tr>`).join('')}
+  </table></div>`;
+}
+
+async function loadUsers(main) {
+  const query = new URLSearchParams({
+    search: state.usersSearch,
+    page: state.usersPage,
+    pageSize: 20,
+  });
+  const data = await api(`/api/admin/users?${query}`);
+  main.innerHTML = `
+    <div class="topbar"><h1>账号管理</h1><div class="muted">共 ${data.total} 个账号</div></div>
+    <div class="toolbar">
+      <input id="user-search" placeholder="搜索用户名 / 邮箱" value="${escapeHtml(state.usersSearch)}">
+      <button onclick="searchUsers()">搜索</button>
+      <button onclick="state.usersPage = Math.max(1, state.usersPage - 1); loadTab()">上一页</button>
+      <button onclick="state.usersPage += 1; loadTab()">下一页</button>
+    </div>
+    <div class="section">
+      <div class="table-wrap"><table>
+        <tr><th>用户名</th><th>邮箱</th><th>角色</th><th>状态</th><th>点数</th><th>会话</th><th>注册时间</th><th>操作</th></tr>
+        ${data.users.map((u) => `<tr>
+          <td>${escapeHtml(u.username)}</td>
+          <td>${escapeHtml(u.email)}</td>
+          <td><span class="pill ${u.role === 'admin' ? 'admin' : ''}">${u.role}</span></td>
+          <td>${u.banned ? '<span class="pill bad">封禁</span>' : '<span class="pill ok">正常</span>'}</td>
+          <td>${u.credits}</td>
+          <td>${u.session_count || 0}</td>
+          <td>${escapeHtml((u.created_at || '').slice(0, 19).replace('T', ' '))}</td>
+          <td>
+            <button onclick="addCredits('${u.id}', 100)">+100</button>
+            ${u.banned
+              ? `<button onclick="setBan('${u.id}', false)">解封</button>`
+              : `<button class="danger" onclick="setBan('${u.id}', true)">封禁</button>`}
+            <button onclick="resetPassword('${u.id}')">重置密码</button>
+            <button onclick="toggleRole('${u.id}', '${u.role}')">${u.role === 'admin' ? '降为玩家' : '设为管理'}</button>
+          </td>
+        </tr>`).join('')}
+      </table></div>
+    </div>`;
+}
+
+function searchUsers() {
+  state.usersSearch = document.getElementById('user-search').value.trim();
+  state.usersPage = 1;
+  loadTab();
+}
+
+async function addCredits(userId, amount) {
+  const user = await api(`/api/admin/users/${userId}/credits`, {
+    method: 'POST',
+    body: JSON.stringify({ credits: amount }),
+  });
+  alert(`点数已设置为 ${user.credits}`);
+  loadTab();
+}
+
+async function setBan(userId, banned) {
+  await api(`/api/admin/users/${userId}/${banned ? 'ban' : 'unban'}`, { method: 'POST' });
+  loadTab();
+}
+
+async function resetPassword(userId) {
+  const password = prompt('输入新密码（至少 6 位）');
+  if (!password) return;
+  await api(`/api/admin/users/${userId}/password`, {
+    method: 'POST',
+    body: JSON.stringify({ password }),
+  });
+  alert('密码已重置');
+}
+
+async function toggleRole(userId, currentRole) {
+  const role = currentRole === 'admin' ? 'user' : 'admin';
+  await api(`/api/admin/users/${userId}/role`, {
+    method: 'POST',
+    body: JSON.stringify({ role }),
+  });
+  loadTab();
+}
+
+async function loadRooms(main) {
+  const data = await api('/api/admin/rooms');
+  main.innerHTML = `
+    <div class="topbar"><h1>房间管理</h1><div class="muted">${data.rooms.length} 个房间</div></div>
+    <div class="section">
+      <div class="table-wrap"><table>
+        <tr><th>房间</th><th>状态</th><th>房主</th><th>人数</th><th>战斗</th><th>创建时间</th><th>操作</th></tr>
+        ${data.rooms.map((room) => `<tr>
+          <td>${escapeHtml(room.id)}</td>
+          <td><span class="pill">${escapeHtml(room.status)}</span></td>
+          <td>${escapeHtml(room.owner_name || '-')}</td>
+          <td>${room.player_count}</td>
+          <td>${room.battle_count}</td>
+          <td>${escapeHtml((room.created_at || '').slice(0, 19).replace('T', ' '))}</td>
+          <td><button class="danger" onclick="closeRoom('${room.id}')">关闭</button></td>
+        </tr>`).join('')}
+      </table></div>
+    </div>`;
+}
+
+async function closeRoom(roomId) {
+  if (!confirm(`确认关闭房间 ${roomId}？`)) return;
+  await api(`/api/admin/rooms/${roomId}/close`, { method: 'POST' });
+  loadTab();
+}
+
+async function loadBattles(main) {
+  const data = await api('/api/admin/battles');
+  main.innerHTML = `
+    <div class="topbar"><h1>战斗管理</h1><div class="muted">${data.battles.length} 场战斗</div></div>
+    <div class="section">
+      <div class="table-wrap"><table>
+        <tr><th>战斗</th><th>房间</th><th>状态</th><th>回合</th><th>阶段</th><th>开始时间</th><th>操作</th></tr>
+        ${data.battles.map((b) => `<tr>
+          <td>${escapeHtml(b.id)}</td>
+          <td>${escapeHtml(b.room_id)}</td>
+          <td><span class="pill ${b.status === 'active' ? 'warn' : 'ok'}">${escapeHtml(b.status)}</span></td>
+          <td>${b.turn}</td>
+          <td>${escapeHtml(b.phase)}</td>
+          <td>${escapeHtml((b.started_at || '').slice(0, 19).replace('T', ' '))}</td>
+          <td>${b.status === 'active' ? `<button class="danger" onclick="finishBattle('${b.id}')">强制结束</button>` : '-'}</td>
+        </tr>`).join('')}
+      </table></div>
+    </div>`;
+}
+
+async function finishBattle(battleId) {
+  if (!confirm(`确认强制结束战斗 ${battleId}？`)) return;
+  await api(`/api/admin/battles/${battleId}/finish`, { method: 'POST' });
+  loadTab();
+}
+
+async function loadSessions(main) {
+  const data = await api('/api/admin/sessions');
+  main.innerHTML = `
+    <div class="topbar"><h1>会话管理</h1><div class="muted">${data.sessions.length} 条会话</div></div>
+    <div class="section">
+      <div class="table-wrap"><table>
+        <tr><th>Token</th><th>用户</th><th>邮箱</th><th>创建时间</th><th>最后活跃</th><th>操作</th></tr>
+        ${data.sessions.map((s) => `<tr>
+          <td>${escapeHtml(s.token.slice(0, 16))}...</td>
+          <td>${escapeHtml(s.username)}</td>
+          <td>${escapeHtml(s.email)}</td>
+          <td>${escapeHtml((s.created_at || '').slice(0, 19).replace('T', ' '))}</td>
+          <td>${escapeHtml((s.last_seen_at || '').slice(0, 19).replace('T', ' ')) || '-'}</td>
+          <td><button class="danger" onclick="revokeSession('${s.token}')">吊销</button></td>
+        </tr>`).join('')}
+      </table></div>
+    </div>`;
+}
+
+async function revokeSession(token) {
+  if (!confirm('确认吊销该会话？')) return;
+  await api('/api/admin/sessions/revoke', {
+    method: 'POST',
+    body: JSON.stringify({ token }),
+  });
+  loadTab();
+}
+
+async function loadLogs(main) {
+  const [rollsData, gachaData] = await Promise.all([
+    api('/api/admin/rolls'),
+    api('/api/admin/gacha'),
+  ]);
+  main.innerHTML = `
+    <div class="topbar"><h1>操作日志</h1></div>
+    <div class="section">
+      <h2>骰值记录</h2>
+      <div class="table-wrap"><table>
+        <tr><th>ID</th><th>用户</th><th>骰子</th><th>结果</th><th>原因</th><th>时间</th></tr>
+        ${rollsData.rolls.map((r) => `<tr>
+          <td>${r.id}</td>
+          <td>${escapeHtml(r.username)}</td>
+          <td>${r.count}d${r.sides}</td>
+          <td>${escapeHtml(r.values_json)}</td>
+          <td>${escapeHtml(r.reason)}</td>
+          <td>${escapeHtml((r.at || '').slice(0, 19).replace('T', ' '))}</td>
+        </tr>`).join('')}
+      </table></div>
+    </div>
+    <div class="section">
+      <h2>抽卡记录</h2>
+      <div class="table-wrap"><table>
+        <tr><th>ID</th><th>用户</th><th>卡池</th><th>数量</th><th>花费</th><th>结果</th><th>时间</th></tr>
+        ${gachaData.pulls.map((p) => `<tr>
+          <td>${escapeHtml(p.id)}</td>
+          <td>${escapeHtml(p.username)}</td>
+          <td>${escapeHtml(p.pool)}</td>
+          <td>${p.count}</td>
+          <td>${p.cost}</td>
+          <td>${escapeHtml(p.result_json)}</td>
+          <td>${escapeHtml((p.created_at || '').slice(0, 19).replace('T', ' '))}</td>
+        </tr>`).join('')}
+      </table></div>
+    </div>`;
+}
+
+function logout() {
+  state.token = '';
+  localStorage.removeItem('dn_admin_token');
+  renderLogin();
+}
+
+if (state.token) {
+  enterApp();
+} else {
+  renderLogin();
+}
+</script>
+</body>
+</html>

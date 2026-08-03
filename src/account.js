@@ -25,6 +25,8 @@ function publicUser(user) {
     id: user.id,
     username: user.username,
     email: user.email,
+    role: user.role || 'user',
+    banned: Boolean(user.banned),
     credits: user.credits,
     createdAt: user.created_at,
   };
@@ -34,6 +36,9 @@ export function createAccountService({ db, passwordlessLogin = false }) {
   const insertUser = db.prepare(
     'INSERT INTO users (id, username, email, password_hash, credits, created_at) VALUES (?, ?, ?, ?, 1000, ?)',
   );
+  const insertAdmin = db.prepare(
+    "INSERT INTO users (id, username, email, password_hash, credits, role, created_at) VALUES (?, ?, ?, ?, 1000, 'admin', ?)",
+  );
   const selectUserByUsername = db.prepare('SELECT * FROM users WHERE username = ?');
   const selectUserByEmail = db.prepare('SELECT * FROM users WHERE email = ?');
   const selectUserByLogin = db.prepare('SELECT * FROM users WHERE email = ? OR username = ?');
@@ -41,6 +46,9 @@ export function createAccountService({ db, passwordlessLogin = false }) {
   const insertSession = db.prepare('INSERT INTO sessions (token, user_id, created_at) VALUES (?, ?, ?)');
   const selectSession = db.prepare('SELECT * FROM sessions WHERE token = ?');
   const deleteSession = db.prepare('DELETE FROM sessions WHERE token = ?');
+  const updateLastSeen = db.prepare('UPDATE sessions SET last_seen_at = ? WHERE token = ?');
+  const updateUserPassword = db.prepare('UPDATE users SET password_hash = ? WHERE id = ?');
+  const updateUserRole = db.prepare('UPDATE users SET role = ? WHERE id = ?');
 
   function resolveToken(token) {
     if (!token) {
@@ -54,6 +62,10 @@ export function createAccountService({ db, passwordlessLogin = false }) {
     if (!user) {
       throw httpError(401, 'invalid_token');
     }
+    if (user.banned) {
+      throw httpError(403, 'account_banned');
+    }
+    updateLastSeen.run(new Date().toISOString(), token);
     return user;
   }
 
@@ -107,6 +119,9 @@ export function createAccountService({ db, passwordlessLogin = false }) {
       if (!user) {
         throw httpError(401, 'bad_credentials');
       }
+      if (user.banned) {
+        throw httpError(403, 'account_banned');
+      }
       if (!passwordlessLogin && !verifyPassword(password, user.password_hash)) {
         throw httpError(401, 'bad_credentials');
       }
@@ -118,6 +133,46 @@ export function createAccountService({ db, passwordlessLogin = false }) {
         throw httpError(401, 'missing_token');
       }
       deleteSession.run(token);
+      return { ok: true };
+    },
+
+    ensureAdmin(email, password) {
+      const normalizedEmail = String(email || '').trim().toLowerCase();
+      if (!normalizedEmail || !password) {
+        return null;
+      }
+      const existing = selectUserByEmail.get(normalizedEmail);
+      if (existing) {
+        updateUserRole.run('admin', existing.id);
+        updateUserPassword.run(hashPassword(password), existing.id);
+        return publicUser(selectUserById.get(existing.id));
+      }
+      const localPart = normalizedEmail.split('@')[0].replace(/[^a-zA-Z0-9_]/g, '_').slice(0, 24);
+      const username = `${localPart || 'admin'}_${randomBytes(3).toString('hex')}`;
+      const user = {
+        id: `u_${randomBytes(6).toString('hex')}`,
+        username,
+        email: normalizedEmail,
+        passwordHash: hashPassword(password),
+        createdAt: new Date().toISOString(),
+      };
+      insertAdmin.run(user.id, user.username, user.email, user.passwordHash, user.createdAt);
+      return publicUser(selectUserById.get(user.id));
+    },
+
+    adminSetPassword(userId, password) {
+      if (typeof password !== 'string' || password.length < 6) {
+        throw httpError(400, 'weak_password');
+      }
+      updateUserPassword.run(hashPassword(password), userId);
+      return { ok: true };
+    },
+
+    adminSetRole(userId, role) {
+      if (role !== 'admin' && role !== 'user') {
+        throw httpError(400, 'invalid_role');
+      }
+      updateUserRole.run(role, userId);
       return { ok: true };
     },
 

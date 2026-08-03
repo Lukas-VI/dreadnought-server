@@ -8,6 +8,7 @@ account, lobby, and battle services so deployment and development stay simple.
 - `src/server.js` - HTTP entry point and service wiring
 - `src/db.js` - SQLite schema and connection
 - `src/account.js` - registration, login, sessions, and player profile
+- `src/admin.js` - admin API for dashboard, account/room/battle/session management
 - `src/lobby.js` - room creation, joining, and readiness
 - `src/battle.js` - authoritative battle state and audited dice rolls
 - `src/gacha.js` - authenticated pulls with idempotency and rate data
@@ -24,6 +25,17 @@ Health check:
 ```bash
 curl http://localhost:3000/health
 ```
+
+Admin console:
+
+```bash
+open http://localhost:3000/admin
+```
+
+Set `ADMIN_EMAIL` and `ADMIN_PASSWORD` in `.env` before starting the server.
+The first start creates or promotes that account to `admin`, and `/admin` can
+then be used to view live statistics, manage users, close rooms, force-finish
+battles, revoke sessions, and browse roll/gacha logs.
 
 Smoke test (HTTP + WebSocket + gacha):
 

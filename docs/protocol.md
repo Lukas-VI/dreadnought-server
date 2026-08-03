@@ -25,6 +25,33 @@ Sessions are stored in SQLite with no short TTL, so tokens are long-lived across
 server restarts. Send the token as `Authorization: Bearer <token>` on
 authenticated HTTP requests. New players start with 1000 credits.
 
+## Admin console
+
+The built-in console is served at `/admin`. Create an administrator with the
+`ADMIN_EMAIL` / `ADMIN_PASSWORD` environment variables; the server creates or
+promotes that account on startup.
+
+Admin endpoints all require an `admin` role:
+
+| Method | Path | Description |
+| --- | --- | --- |
+| GET | `/api/admin/overview` | Dashboard stats, daily trends, recent rooms/battles/users |
+| GET | `/api/admin/stats` | Aggregate counters |
+| GET | `/api/admin/daily` | Last 14 days grouped by day |
+| GET | `/api/admin/users?search=&page=&pageSize=` | Paginated user list |
+| POST | `/api/admin/users/:id/credits` | Set credits |
+| POST | `/api/admin/users/:id/ban` / `unban` | Ban or unban |
+| POST | `/api/admin/users/:id/password` | Reset password |
+| POST | `/api/admin/users/:id/role` | Promote or demote admin |
+| GET | `/api/admin/rooms` | Room list |
+| POST | `/api/admin/rooms/:id/close` | Close and delete a room |
+| GET | `/api/admin/battles` | Battle list |
+| POST | `/api/admin/battles/:id/finish` | Force-finish a battle |
+| GET | `/api/admin/sessions` | Session list |
+| POST | `/api/admin/sessions/revoke` | Revoke a session token |
+| GET | `/api/admin/rolls` | Recent dice roll log |
+| GET | `/api/admin/gacha` | Recent gacha pull log |
+
 ## HTTP endpoints
 
 | Method | Path | Description |

@@ -1695,6 +1695,23 @@ export function createBattleStateService({ db, accountService, battleService }) 
       return true;
     },
 
+    adminFinish(battleId) {
+      const state = states.get(battleId) || load(battleId);
+      if (!state) {
+        return { ok: false };
+      }
+      state.status = 'finished';
+      state.winner = null;
+      state.paused = false;
+      stopTimer(battleId);
+      markRoomFinished(state);
+      persist(state);
+      if (broadcastState) {
+        broadcastState(battleId, publicState(state));
+      }
+      return { ok: true };
+    },
+
     setBroadcastCallback(callback) {
       broadcastState = callback;
     },

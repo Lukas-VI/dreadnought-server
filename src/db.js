@@ -10,13 +10,16 @@ CREATE TABLE IF NOT EXISTS users (
   email TEXT NOT NULL UNIQUE,
   password_hash TEXT NOT NULL,
   credits INTEGER NOT NULL DEFAULT 1000,
+  role TEXT NOT NULL DEFAULT 'user',
+  banned INTEGER NOT NULL DEFAULT 0,
   created_at TEXT NOT NULL
 );
 
 CREATE TABLE IF NOT EXISTS sessions (
   token TEXT PRIMARY KEY,
   user_id TEXT NOT NULL REFERENCES users(id),
-  created_at TEXT NOT NULL
+  created_at TEXT NOT NULL,
+  last_seen_at TEXT
 );
 
 CREATE TABLE IF NOT EXISTS rooms (
@@ -77,6 +80,16 @@ export function createDatabase(dbPath = process.env.DATABASE_PATH || 'data/dread
       "UPDATE users SET email = lower(username) || '@local.test' WHERE email IS NULL OR email = ''",
     ).run();
     db.exec('CREATE UNIQUE INDEX IF NOT EXISTS idx_users_email ON users(email)');
+  }
+  if (!userColumns.some((column) => column.name === 'role')) {
+    db.exec("ALTER TABLE users ADD COLUMN role TEXT NOT NULL DEFAULT 'user'");
+  }
+  if (!userColumns.some((column) => column.name === 'banned')) {
+    db.exec('ALTER TABLE users ADD COLUMN banned INTEGER NOT NULL DEFAULT 0');
+  }
+  const sessionColumns = db.prepare('PRAGMA table_info(sessions)').all();
+  if (!sessionColumns.some((column) => column.name === 'last_seen_at')) {
+    db.exec('ALTER TABLE sessions ADD COLUMN last_seen_at TEXT');
   }
   const battleColumns = db.prepare('PRAGMA table_info(battles)').all();
   if (!battleColumns.some((column) => column.name === 'state_json')) {

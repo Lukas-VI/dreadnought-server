@@ -1,6 +1,8 @@
 import http from 'node:http';
+import { readFileSync } from 'node:fs';
 
 import { createAccountService } from './account.js';
+import { createAdminService } from './admin.js';
 import { createBattleService } from './battle.js';
 import { createBattleStateService } from './battleState.js';
 import { loadConfig } from './config.js';
@@ -17,10 +19,15 @@ const accountService = createAccountService({
   passwordlessLogin:
     (config.DEV_PASSWORDLESS_LOGIN ?? process.env.DEV_PASSWORDLESS_LOGIN) === 'true',
 });
+const adminService = createAdminService({ db, accountService });
 const lobbyService = createLobbyService({ db, accountService });
 const battleService = createBattleService({ db, accountService, lobbyService });
 const battleStateService = createBattleStateService({ db, accountService, battleService });
 const gachaService = createGachaService({ db, accountService });
+accountService.ensureAdmin(
+  config.ADMIN_EMAIL ?? process.env.ADMIN_EMAIL,
+  config.ADMIN_PASSWORD ?? process.env.ADMIN_PASSWORD,
+);
 
 function sendJson(res, status, body) {
   res.writeHead(status, { 'content-type': 'application/json' });
@@ -97,6 +104,100 @@ async function handleRequest(req, res) {
 
     if (req.method === 'GET' && path === '/api/me') {
       sendJson(res, 200, accountService.getUser(bearerToken(req)));
+      return;
+    }
+
+    if (req.method === 'GET' && (path === '/admin' || path === '/admin/')) {
+      const html = readFileSync(new URL('../public/admin.html', import.meta.url), 'utf8');
+      res.writeHead(200, { 'content-type': 'text/html; charset=utf-8' });
+      res.end(html);
+      return;
+    }
+
+    if (path.startsWith('/api/admin/')) {
+      adminService.requireAdmin(bearerToken(req));
+
+      if (req.method === 'GET' && path === '/api/admin/overview') {
+        sendJson(res, 200, adminService.overview());
+        return;
+      }
+      if (req.method === 'GET' && path === '/api/admin/stats') {
+        sendJson(res, 200, adminService.stats());
+        return;
+      }
+      if (req.method === 'GET' && path === '/api/admin/daily') {
+        sendJson(res, 200, adminService.dailyCounts());
+        return;
+      }
+      if (req.method === 'GET' && path === '/api/admin/users') {
+        sendJson(res, 200, adminService.listUsers({
+          search: url.searchParams.get('search') || '',
+          page: url.searchParams.get('page') || 1,
+          pageSize: url.searchParams.get('pageSize') || 20,
+        }));
+        return;
+      }
+      if (req.method === 'GET' && path === '/api/admin/rooms') {
+        sendJson(res, 200, { rooms: adminService.listRooms() });
+        return;
+      }
+      if (req.method === 'GET' && path === '/api/admin/battles') {
+        sendJson(res, 200, { battles: adminService.listBattles() });
+        return;
+      }
+      if (req.method === 'GET' && path === '/api/admin/sessions') {
+        sendJson(res, 200, { sessions: adminService.listSessions() });
+        return;
+      }
+      if (req.method === 'GET' && path === '/api/admin/rolls') {
+        sendJson(res, 200, { rolls: adminService.listRolls() });
+        return;
+      }
+      if (req.method === 'GET' && path === '/api/admin/gacha') {
+        sendJson(res, 200, { pulls: adminService.listGachaPulls() });
+        return;
+      }
+
+      const userMatch = path.match(/^\/api\/admin\/users\/([^/]+)\/(credits|ban|unban|password|role)$/);
+      if (req.method === 'POST' && userMatch) {
+        const userId = decodeURIComponent(userMatch[1]);
+        const action = userMatch[2];
+        const body = await readJson(req);
+        if (action === 'credits') {
+          sendJson(res, 200, adminService.setCredits(userId, body.credits));
+        } else if (action === 'ban') {
+          sendJson(res, 200, adminService.setBan(userId, true));
+        } else if (action === 'unban') {
+          sendJson(res, 200, adminService.setBan(userId, false));
+        } else if (action === 'password') {
+          sendJson(res, 200, accountService.adminSetPassword(userId, body.password));
+        } else {
+          sendJson(res, 200, accountService.adminSetRole(userId, body.role));
+        }
+        return;
+      }
+
+      const roomMatch = path.match(/^\/api\/admin\/rooms\/([^/]+)\/close$/);
+      if (req.method === 'POST' && roomMatch) {
+        sendJson(res, 200, adminService.closeRoom(decodeURIComponent(roomMatch[1])));
+        return;
+      }
+
+      const battleMatch = path.match(/^\/api\/admin\/battles\/([^/]+)\/finish$/);
+      if (req.method === 'POST' && battleMatch) {
+        const battleId = decodeURIComponent(battleMatch[1]);
+        adminService.finishBattle(battleId);
+        sendJson(res, 200, battleStateService.adminFinish(battleId));
+        return;
+      }
+
+      if (req.method === 'POST' && path === '/api/admin/sessions/revoke') {
+        const body = await readJson(req);
+        sendJson(res, 200, adminService.revokeSession(body.token));
+        return;
+      }
+
+      sendJson(res, 404, { error: 'not_found' });
       return;
     }
 
