@@ -12,12 +12,12 @@ const NEXT_PHASE = {
 };
 
 const FACING_VECTORS = [
-  [1, 0],
-  [1, -1],
-  [0, -1],
-  [-1, 0],
-  [-1, 1],
-  [0, 1],
+  [0, -1], // N
+  [1, -1], // NE
+  [1, 0],  // SE
+  [0, 1],  // S
+  [-1, 1], // SW
+  [-1, 0], // NW
 ];
 
 function addHex(a, b) {
