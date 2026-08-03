@@ -326,6 +326,7 @@ export function createBattleStateService({ db, accountService, battleService }) 
   }
 
   function applyPhase(state) {
+    const moves = [];
     for (const playerId of state.turnOrder) {
       const command = state.commands[playerId];
       const playerSide = state.players.indexOf(playerId);
@@ -345,12 +346,17 @@ export function createBattleStateService({ db, accountService, battleService }) 
         }
 
         if (state.phase.startsWith('move')) {
+          let facing = ship.facing;
           if (action === 'turn_left') {
-            ship.facing = (ship.facing + 5) % 6;
+            facing = (facing + 5) % 6;
           } else if (action === 'turn_right') {
-            ship.facing = (ship.facing + 1) % 6;
+            facing = (facing + 1) % 6;
           }
-          ship.hex = addHex(ship.hex, FACING_VECTORS[ship.facing]);
+          moves.push({
+            ship,
+            facing,
+            target: addHex(ship.hex, FACING_VECTORS[facing]),
+          });
           continue;
         }
 
@@ -372,6 +378,30 @@ export function createBattleStateService({ db, accountService, battleService }) 
             });
           }
         }
+      }
+    }
+
+    if (state.phase.startsWith('move')) {
+      const counts = new Map();
+      for (const move of moves) {
+        const key = move.target.join(',');
+        const count = counts.get(key) || { 0: 0, 1: 0 };
+        count[move.ship.side] += 1;
+        counts.set(key, count);
+      }
+
+      for (const move of moves) {
+        move.ship.facing = move.facing;
+        const count = counts.get(move.target.join(','));
+        const blocked = count[1 - move.ship.side] > 0 || count[move.ship.side] > 2;
+        if (blocked) {
+          state.eventLog.push({
+            at: new Date().toISOString(),
+            message: `${move.ship.name} 移动被阻挡（堆叠上限或敌格）`,
+          });
+          continue;
+        }
+        move.ship.hex = move.target;
       }
     }
 
