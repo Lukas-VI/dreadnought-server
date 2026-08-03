@@ -96,6 +96,26 @@ function moveForPhase(speed, phase, oddTurn) {
   return base;
 }
 
+function buildMovePath(startHex, facing, steps, turnDelta) {
+  let heading = facing;
+  const path = [[startHex[0], startHex[1]]];
+  const headings = [];
+  for (let step = 0; step < steps; step++) {
+    if (step === 0 && turnDelta) {
+      heading = (heading + turnDelta + 6) % 6;
+    }
+    const last = path[path.length - 1];
+    const vector = FACING_VECTORS[heading];
+    path.push([last[0] + vector[0], last[1] + vector[1]]);
+    headings.push(heading);
+  }
+  return {
+    path,
+    headings,
+    facing: headings.length > 0 ? headings[headings.length - 1] : facing,
+  };
+}
+
 function facingFromOffset(dx, dy) {
   const index = FACING_VECTORS.findIndex((v) => v[0] === dx && v[1] === dy);
   return index === -1 ? 0 : index;
@@ -1304,9 +1324,10 @@ export function createBattleStateService({ db, accountService, battleService }) 
         if (state.phase.startsWith('move')) {
           let facing = ship.facing;
           const isFollower = ship.formationLeadId && ship.formationLeadId !== ship.id;
+          let turnDelta = 0;
           if (action === 'turn_left') {
             if (isFollower || consumeSideCP(state, ship.side, 1)) {
-              facing = (facing + 5) % 6;
+              turnDelta = -1;
             } else if (!isFollower) {
               state.eventLog.push({
                 at: new Date().toISOString(),
@@ -1315,7 +1336,7 @@ export function createBattleStateService({ db, accountService, battleService }) 
             }
           } else if (action === 'turn_right') {
             if (isFollower || consumeSideCP(state, ship.side, 1)) {
-              facing = (facing + 1) % 6;
+              turnDelta = 1;
             } else if (!isFollower) {
               state.eventLog.push({
                 at: new Date().toISOString(),
@@ -1324,17 +1345,13 @@ export function createBattleStateService({ db, accountService, battleService }) 
             }
           }
           const steps = moveForPhase(ship.speed, phaseNum, oddTurn);
-          const vector = FACING_VECTORS[facing];
-          const path = [[ship.hex[0], ship.hex[1]]];
-          for (let step = 0; step < steps; step++) {
-            const last = path[path.length - 1];
-            path.push([last[0] + vector[0], last[1] + vector[1]]);
-          }
+          const built = buildMovePath(ship.hex, facing, steps, turnDelta);
           moves.push({
             ship,
-            facing,
-            target: path[path.length - 1],
-            path,
+            facing: built.facing,
+            target: built.path[built.path.length - 1],
+            path: built.path,
+            headings: built.headings,
           });
           continue;
         }
@@ -1410,10 +1427,8 @@ export function createBattleStateService({ db, accountService, battleService }) 
       }
       const leadSteps = leadMove.path.length - 1;
       for (let i = 0; i < leadSteps; i++) {
-        const last = trail.cells[trail.cells.length - 1];
-        const vector = FACING_VECTORS[leadMove.facing];
-        trail.cells.push([last[0] + vector[0], last[1] + vector[1]]);
-        trail.headings.push(leadMove.facing);
+        trail.cells.push([...leadMove.path[i + 1]]);
+        trail.headings.push(leadMove.headings[i] || leadMove.facing);
       }
       for (let k = 1; k < group.length; k++) {
         const follower = group[k];
@@ -1456,7 +1471,13 @@ export function createBattleStateService({ db, accountService, battleService }) 
         if (ship.hp <= 0) {
           continue;
         }
-        ship.facing = move.facing;
+        const isFormationFollower = move.ship.formationLeadId
+          && move.ship.formationLeadId !== move.ship.id;
+        ship.facing = isFormationFollower
+          ? move.facing
+          : move.headings && move.headings.length > 0
+            ? move.headings[move.headings.length - 1]
+            : move.facing;
         const origin = [...ship.hex];
         const path = move.path && move.path.length > 1 ? move.path : [origin, move.target];
         let current = origin;
