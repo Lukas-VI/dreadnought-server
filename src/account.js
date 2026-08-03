@@ -2,6 +2,8 @@ import { randomBytes, scryptSync, timingSafeEqual } from 'node:crypto';
 
 import { httpError } from './httpError.js';
 
+const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+
 function hashPassword(password) {
   const salt = randomBytes(16).toString('hex');
   const hash = scryptSync(password, salt, 32).toString('hex');
@@ -22,6 +24,7 @@ function publicUser(user) {
   return {
     id: user.id,
     username: user.username,
+    email: user.email,
     credits: user.credits,
     createdAt: user.created_at,
   };
@@ -29,9 +32,11 @@ function publicUser(user) {
 
 export function createAccountService({ db, passwordlessLogin = false }) {
   const insertUser = db.prepare(
-    'INSERT INTO users (id, username, password_hash, credits, created_at) VALUES (?, ?, ?, 1000, ?)',
+    'INSERT INTO users (id, username, email, password_hash, credits, created_at) VALUES (?, ?, ?, ?, 1000, ?)',
   );
   const selectUserByUsername = db.prepare('SELECT * FROM users WHERE username = ?');
+  const selectUserByEmail = db.prepare('SELECT * FROM users WHERE email = ?');
+  const selectUserByLogin = db.prepare('SELECT * FROM users WHERE email = ? OR username = ?');
   const selectUserById = db.prepare('SELECT * FROM users WHERE id = ?');
   const insertSession = db.prepare('INSERT INTO sessions (token, user_id, created_at) VALUES (?, ?, ?)');
   const selectSession = db.prepare('SELECT * FROM sessions WHERE token = ?');
@@ -59,7 +64,11 @@ export function createAccountService({ db, passwordlessLogin = false }) {
   }
 
   return {
-    register({ username, password }) {
+    register({ email, username, password }) {
+      const normalizedEmail = String(email || '').trim().toLowerCase();
+      if (!EMAIL_RE.test(normalizedEmail)) {
+        throw httpError(400, 'invalid_email');
+      }
       if (typeof username !== 'string' || username.length < 3) {
         throw httpError(400, 'invalid_username');
       }
@@ -69,14 +78,18 @@ export function createAccountService({ db, passwordlessLogin = false }) {
       const user = {
         id: `u_${randomBytes(6).toString('hex')}`,
         username,
+        email: normalizedEmail,
         passwordHash: hashPassword(password),
         credits: 1000,
         createdAt: new Date().toISOString(),
       };
       try {
-        insertUser.run(user.id, user.username, user.passwordHash, user.createdAt);
+        insertUser.run(user.id, user.username, user.email, user.passwordHash, user.createdAt);
       } catch (err) {
         if (String(err.code || '').includes('UNIQUE')) {
+          if (selectUserByEmail.get(user.email)) {
+            throw httpError(409, 'email_taken');
+          }
           throw httpError(409, 'username_taken');
         }
         throw err;
@@ -84,8 +97,13 @@ export function createAccountService({ db, passwordlessLogin = false }) {
       return issueSession(user);
     },
 
-    login({ username, password }) {
-      const user = selectUserByUsername.get(username);
+    login({ email, username, password }) {
+      const loginId = email && String(email).trim()
+        ? String(email).trim().toLowerCase()
+        : username;
+      const user = typeof loginId === 'string' && loginId.length > 0
+        ? selectUserByLogin.get(loginId, loginId)
+        : null;
       if (!user) {
         throw httpError(401, 'bad_credentials');
       }

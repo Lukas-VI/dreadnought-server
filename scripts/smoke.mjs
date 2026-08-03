@@ -117,17 +117,24 @@ async function connect(token) {
 const suffix = Date.now().toString(36);
 const a = await request('/api/auth/register', {
   method: 'POST',
-  body: { username: `smoke_a_${suffix}`, password: 'secret1' },
+  body: { email: `smoke_a_${suffix}@test.local`, username: `smoke_a_${suffix}`, password: 'secret1' },
 });
 const b = await request('/api/auth/register', {
   method: 'POST',
-  body: { username: `smoke_b_${suffix}`, password: 'secret2' },
+  body: { email: `smoke_b_${suffix}@test.local`, username: `smoke_b_${suffix}`, password: 'secret2' },
 });
+const emailLogin = await request('/api/auth/login', {
+  method: 'POST',
+  body: { email: a.user.email, password: 'secret1' },
+});
+if (emailLogin.user.email !== a.user.email) {
+  throw new Error('email login failed');
+}
 
 if (process.env.TEST_PASSWORDLESS === 'true') {
   const passwordless = await request('/api/auth/login', {
     method: 'POST',
-    body: { username: a.user.username, password: '' },
+    body: { email: a.user.email, password: '' },
   });
   if (!passwordless.token) {
     throw new Error('passwordless login failed');

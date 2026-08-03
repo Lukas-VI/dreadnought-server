@@ -4,18 +4,26 @@ All HTTP bodies and WebSocket frames are JSON.
 
 ## Authentication
 
-Register or login to receive a token:
+Register with an email, username, and password to receive a token:
 
 ```json
 POST /api/auth/register
-{ "username": "admiral", "password": "secret1" }
+{ "email": "admiral@example.com", "username": "admiral", "password": "secret1" }
 
 200/201
-{ "token": "<hex>", "user": { "id": "u_...", "username": "admiral", "credits": 1000 } }
+{ "token": "<hex>", "user": { "id": "u_...", "username": "admiral", "email": "admiral@example.com", "credits": 1000 } }
 ```
 
-Send the token as `Authorization: Bearer <token>` on authenticated HTTP requests.
-New players start with 1000 credits.
+Login accepts either `email` or `username`:
+
+```json
+POST /api/auth/login
+{ "email": "admiral@example.com", "password": "secret1" }
+```
+
+Sessions are stored in SQLite with no short TTL, so tokens are long-lived across
+server restarts. Send the token as `Authorization: Bearer <token>` on
+authenticated HTTP requests. New players start with 1000 credits.
 
 ## HTTP endpoints
 

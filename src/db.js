@@ -7,6 +7,7 @@ const schema = `
 CREATE TABLE IF NOT EXISTS users (
   id TEXT PRIMARY KEY,
   username TEXT NOT NULL UNIQUE,
+  email TEXT NOT NULL UNIQUE,
   password_hash TEXT NOT NULL,
   credits INTEGER NOT NULL DEFAULT 1000,
   created_at TEXT NOT NULL
@@ -69,6 +70,14 @@ export function createDatabase(dbPath = process.env.DATABASE_PATH || 'data/dread
   db.pragma('journal_mode = WAL');
   db.pragma('foreign_keys = ON');
   db.exec(schema);
+  const userColumns = db.prepare('PRAGMA table_info(users)').all();
+  if (!userColumns.some((column) => column.name === 'email')) {
+    db.exec('ALTER TABLE users ADD COLUMN email TEXT');
+    db.prepare(
+      "UPDATE users SET email = lower(username) || '@local.test' WHERE email IS NULL OR email = ''",
+    ).run();
+    db.exec('CREATE UNIQUE INDEX IF NOT EXISTS idx_users_email ON users(email)');
+  }
   const battleColumns = db.prepare('PRAGMA table_info(battles)').all();
   if (!battleColumns.some((column) => column.name === 'state_json')) {
     db.exec('ALTER TABLE battles ADD COLUMN state_json TEXT');

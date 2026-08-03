@@ -71,11 +71,11 @@ async function connect(token) {
 const suffix = Date.now().toString(36);
 const a = await request('/api/auth/register', {
   method: 'POST',
-  body: { username: `snake_a_${suffix}`, password: 'secret1' },
+  body: { email: `snake_a_${suffix}@test.local`, username: `snake_a_${suffix}`, password: 'secret1' },
 });
 const b = await request('/api/auth/register', {
   method: 'POST',
-  body: { username: `snake_b_${suffix}`, password: 'secret2' },
+  body: { email: `snake_b_${suffix}@test.local`, username: `snake_b_${suffix}`, password: 'secret2' },
 });
 const room = await request('/api/lobby/create', {
   method: 'POST',

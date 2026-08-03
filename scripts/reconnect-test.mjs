@@ -87,11 +87,11 @@ async function connect(token) {
 const suffix = Date.now().toString(36);
 const a = await request('/api/auth/register', {
   method: 'POST',
-  body: { username: `reconnect_a_${suffix}`, password: 'secret1' },
+  body: { email: `reconnect_a_${suffix}@test.local`, username: `reconnect_a_${suffix}`, password: 'secret1' },
 });
 const b = await request('/api/auth/register', {
   method: 'POST',
-  body: { username: `reconnect_b_${suffix}`, password: 'secret2' },
+  body: { email: `reconnect_b_${suffix}@test.local`, username: `reconnect_b_${suffix}`, password: 'secret2' },
 });
 const room = await request('/api/lobby/create', {
   method: 'POST',
