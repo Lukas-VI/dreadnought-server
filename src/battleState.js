@@ -16,7 +16,9 @@ const PHASE_INDEX = {
   move1: 1,
   move2: 2,
   move3: 3,
-  gunnery: 4,
+  recon: 4,
+  gunnery: 5,
+  torpedo: 6,
 };
 
 const FACING_VECTORS = [
@@ -232,6 +234,8 @@ function createState(battle, db) {
     enemyCP: Math.min(Number(config.EnemyInitialCP) || 8, enemyMaxCP),
     playerScore: 0,
     enemyScore: 0,
+    mapType: config.MapType || 'day',
+    torpedoPhaseEnabled: Boolean(config.TorpedoPhaseEnabled),
     phaseSeconds: Array.isArray(config.PhaseSecondsPerShip) &&
       config.PhaseSecondsPerShip.length >= 5
       ? config.PhaseSecondsPerShip
@@ -313,6 +317,8 @@ export function createBattleStateService({ db, accountService, battleService }) 
       enemyCP: state.enemyCP,
       playerScore: state.playerScore,
       enemyScore: state.enemyScore,
+      mapType: state.mapType,
+      torpedoPhaseEnabled: state.torpedoPhaseEnabled,
       timerRemaining: state.timerRemaining,
       timerTotal: state.timerTotal,
       timerActivePlayer: state.timerActivePlayer,
@@ -376,6 +382,18 @@ export function createBattleStateService({ db, accountService, battleService }) 
         at: new Date().toISOString(),
         message: `第 ${state.turn} 回合结算完成`,
       });
+      if (state.mapType === 'night') {
+        state.eventLog.push({
+          at: new Date().toISOString(),
+          message: '夜战地图：视野阶段由服务端自动跳过',
+        });
+      }
+      if (state.torpedoPhaseEnabled) {
+        state.eventLog.push({
+          at: new Date().toISOString(),
+          message: '鱼雷阶段已启用：当前由服务端自动跳过',
+        });
+      }
       if (state.status !== 'active' || state.turn >= state.maxTurns) {
         if (state.status === 'active') {
           state.status = 'finished';
