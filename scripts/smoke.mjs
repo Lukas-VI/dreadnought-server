@@ -226,6 +226,11 @@ if (typeof initial.state.timerEndAt !== 'number' || initial.state.timerEndAt <= 
   typeof initial.state.timerStartAt !== 'number' || initial.state.timerStartAt <= 0) {
   throw new Error('battle state missing timer timestamps');
 }
+for (const ship of initial.state.ships) {
+  if (typeof ship.stackIndex !== 'number' || typeof ship.stackTotal !== 'number') {
+    throw new Error('battle state missing stacking fields');
+  }
+}
 
 const firstId = initial.state.activePlayer;
 const secondId = firstId === a.user.id ? b.user.id : a.user.id;
@@ -280,6 +285,16 @@ const initialFacing = firstSide === 0 ? 0 : 3;
 const expectedFacing = (initialFacing + 5) % 6;
 if (firstShipAfterMove1.facing !== expectedFacing) {
   throw new Error(`turn_left failed: ${firstShipAfterMove1.facing} != ${expectedFacing}`);
+}
+const initialFirstHex = initial.state.ships.find((ship) => ship.id === firstShipId).hex;
+const move1Hex = firstShipAfterMove1.hex;
+const hexDistance = Math.max(
+  Math.abs(move1Hex[0] - initialFirstHex[0]),
+  Math.abs(move1Hex[1] - initialFirstHex[1]),
+  Math.abs(-move1Hex[0] - move1Hex[1] + initialFirstHex[0] + initialFirstHex[1]),
+);
+if (hexDistance !== 1) {
+  throw new Error(`speed table phase1 move failed: ${hexDistance}`);
 }
 
 sendShips(firstId, sideShips(afterMove1.state, firstSide, 'wait'));
