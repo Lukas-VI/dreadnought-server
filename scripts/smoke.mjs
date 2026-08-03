@@ -205,6 +205,9 @@ const initial = await clientA.waitForMessage(
 if (initial.state.turn !== 1) {
   throw new Error(`initial turn mismatch: ${initial.state.turn}`);
 }
+if (typeof initial.state.playerCP !== 'number' || typeof initial.state.enemyCP !== 'number') {
+  throw new Error('battle state missing cp fields');
+}
 
 const firstId = initial.state.activePlayer;
 const secondId = firstId === a.user.id ? b.user.id : a.user.id;
@@ -304,6 +307,9 @@ if (!afterGunnery.state.eventLog.some((entry) => entry.message.includes('炮击'
 }
 if (afterGunnery.state.turnOrder[0] !== secondId) {
   throw new Error('initiative did not swap after turn end');
+}
+if (afterGunnery.state.playerCP < 0 || afterGunnery.state.enemyCP < 0) {
+  throw new Error('cp went negative');
 }
 
 const broadcastPromise = clientB.waitFor('battle.rolled');

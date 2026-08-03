@@ -29,6 +29,7 @@ function makeShip(side, index) {
     id: `${side === 0 ? 'p' : 'e'}_${index}_${randomBytes(3).toString('hex')}`,
     name: `${side === 0 ? 'Player' : 'Enemy'} Ship ${index + 1}`,
     shipId: 'frigate',
+    pv: 10,
     side,
     hex: side === 0 ? [2 - index, 0] : [-2 + index, 0],
     facing: side === 0 ? 0 : 3,
@@ -84,6 +85,7 @@ function loadMapShips(db, roomId) {
           id: `${side === 0 ? 'p' : 'e'}_${index}_${key.replace(',', '_')}`,
           name: `${side === 0 ? 'Player' : 'Enemy'} ${shipId} ${index + 1}`,
           shipId,
+          pv: 10,
           side,
           hex: [q, r],
           facing,
@@ -101,8 +103,41 @@ function loadMapShips(db, roomId) {
   }
 }
 
+function loadMapConfig(db, roomId) {
+  const row = db.prepare('SELECT map_json FROM rooms WHERE id = ?').get(roomId);
+  if (!row || !row.map_json) {
+    return {};
+  }
+  try {
+    return JSON.parse(row.map_json);
+  } catch {
+    return {};
+  }
+}
+
 function clamp(value, min, max) {
   return Math.max(min, Math.min(max, value));
+}
+
+function recomputeEconomy(state) {
+  state.playerScore = state.ships
+    .filter((ship) => ship.side === 1 && ship.hp <= 0)
+    .reduce((sum, ship) => sum + (ship.pv || 10), 0);
+  state.enemyScore = state.ships
+    .filter((ship) => ship.side === 0 && ship.hp <= 0)
+    .reduce((sum, ship) => sum + (ship.pv || 10), 0);
+  state.playerCommand = Math.max(
+    1,
+    state.basePlayerCommand - state.ships.filter((ship) => ship.side === 0 && ship.hp <= 0).length,
+  );
+  state.enemyCommand = Math.max(
+    1,
+    state.baseEnemyCommand - state.ships.filter((ship) => ship.side === 1 && ship.hp <= 0).length,
+  );
+  state.playerMaxCP = Math.max(1, state.playerCommand * 2);
+  state.enemyMaxCP = Math.max(1, state.enemyCommand * 2);
+  state.playerCP = Math.min(state.playerCP, state.playerMaxCP);
+  state.enemyCP = Math.min(state.enemyCP, state.enemyMaxCP);
 }
 
 function createState(battle, db) {
@@ -110,6 +145,11 @@ function createState(battle, db) {
   const rollSecond = randomInt(1, 101);
   const first = rollFirst >= rollSecond ? battle.players[0] : battle.players[1];
   const second = battle.players.find((playerId) => playerId !== first);
+  const config = loadMapConfig(db, battle.roomId);
+  const basePlayerCommand = Number(config.PlayerCommand) || 5;
+  const baseEnemyCommand = Number(config.EnemyCommand) || 4;
+  const playerMaxCP = Math.max(1, basePlayerCommand * 2);
+  const enemyMaxCP = Math.max(1, baseEnemyCommand * 2);
   return {
     id: battle.id,
     roomId: battle.roomId,
@@ -118,7 +158,17 @@ function createState(battle, db) {
     phase: 'speed',
     status: 'active',
     winner: null,
-    maxTurns: 18,
+    maxTurns: Number(config.MaxTurns) || 18,
+    basePlayerCommand,
+    baseEnemyCommand,
+    playerCommand: basePlayerCommand,
+    enemyCommand: baseEnemyCommand,
+    playerMaxCP,
+    enemyMaxCP,
+    playerCP: Math.min(Number(config.PlayerInitialCP) || 8, playerMaxCP),
+    enemyCP: Math.min(Number(config.EnemyInitialCP) || 8, enemyMaxCP),
+    playerScore: 0,
+    enemyScore: 0,
     turnOrder: [first, second],
     activePlayer: first,
     initiative: {
@@ -182,6 +232,14 @@ export function createBattleStateService({ db, accountService, battleService }) 
       turnOrder: state.turnOrder,
       activePlayer: state.activePlayer,
       initiative: state.initiative,
+      playerCommand: state.playerCommand,
+      enemyCommand: state.enemyCommand,
+      playerMaxCP: state.playerMaxCP,
+      enemyMaxCP: state.enemyMaxCP,
+      playerCP: state.playerCP,
+      enemyCP: state.enemyCP,
+      playerScore: state.playerScore,
+      enemyScore: state.enemyScore,
       commands: Object.fromEntries(
         Object.entries(state.commands).map(([playerId, command]) => [
           playerId,
@@ -251,6 +309,8 @@ export function createBattleStateService({ db, accountService, battleService }) 
       state.turn += 1;
       state.phase = 'speed';
       state.turnOrder = [state.turnOrder[1], state.turnOrder[0]];
+      state.playerCP = Math.min(state.playerCP + state.playerCommand, state.playerMaxCP);
+      state.enemyCP = Math.min(state.enemyCP + state.enemyCommand, state.enemyMaxCP);
       state.eventLog.push({
         at: new Date().toISOString(),
         message: `第 ${state.turn} 回合，先手权交换`,
@@ -328,6 +388,8 @@ export function createBattleStateService({ db, accountService, battleService }) 
         });
       }
     }
+
+    recomputeEconomy(state);
   }
 
   return {
