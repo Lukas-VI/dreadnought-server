@@ -158,16 +158,20 @@ const afterSpeed = await clientA.waitForMessage(
 
 const leaderId = afterSpeed.state.ships.find((s) => s.shipId === 'dreadnought').id;
 const followerId = afterSpeed.state.ships.find((s) => s.shipId === 'destroyer').id;
-const firstSide = afterSpeed.state.players.indexOf(firstId);
-const turnCommand = (state, side) => state.ships
-  .filter((ship) => ship.side === side)
-  .map((ship) => ({
-    id: ship.id,
-    action: ship.id === leaderId ? 'turn_left' : 'wait',
-  }));
-submit(firstId, turnCommand(afterSpeed.state, firstSide));
+const commandFor = (state, playerId) => {
+  if (playerId === a.user.id) {
+    return state.ships
+      .filter((ship) => ship.side === 0)
+      .map((ship) => ({
+        id: ship.id,
+        action: ship.id === leaderId ? 'turn_left' : 'wait',
+      }));
+  }
+  return waitAll(state, 1);
+};
+submit(firstId, commandFor(afterSpeed.state, firstId));
 await clientA.waitForMessage((m) => m.type === 'battle.state' && m.state.activePlayer === secondId);
-submit(secondId, waitAll(afterSpeed.state, afterSpeed.state.players.indexOf(secondId)));
+submit(secondId, commandFor(afterSpeed.state, secondId));
 const afterMove1 = await clientA.waitForMessage(
   (m) => m.type === 'battle.state' && m.state.phase === 'move2',
 );
