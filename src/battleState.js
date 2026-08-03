@@ -312,32 +312,53 @@ function computeFormations(state) {
       if (!ungrouped.has(lead)) {
         continue;
       }
-      const chain = [lead];
-      let cursor = lead;
-      while (true) {
-        const expected = addHex(cursor.hex, FACING_VECTORS[lead.facing]);
-        const next = ships.find(
-          (candidate) =>
-            ungrouped.has(candidate) &&
-            candidate !== cursor &&
-            candidate.speed === lead.speed &&
-            candidate.facing === lead.facing &&
-            hexDistance(candidate.hex, expected) === 0,
-        );
-        if (!next) {
-          break;
+      const cells = new Map();
+      for (const ship of ships) {
+        if (!ungrouped.has(ship) || ship.facing !== lead.facing || ship.speed !== lead.speed) {
+          continue;
         }
-        chain.push(next);
-        cursor = next;
-        ungrouped.delete(next);
+        const key = ship.hex.join(',');
+        if (!cells.has(key)) {
+          cells.set(key, []);
+        }
+        cells.get(key).push(ship);
       }
+
+      const chain = [];
+      const visited = new Set();
+      const forward = FACING_VECTORS[lead.facing];
+      const backward = [-forward[0], -forward[1]];
+      const collect = (key) => {
+        for (const ship of cells.get(key) || []) {
+          if (visited.add(ship)) {
+            chain.push(ship);
+          }
+        }
+      };
+
+      let cursor = addHex(lead.hex, forward);
+      while (cells.has(cursor.join(','))) {
+        collect(cursor.join(','));
+        cursor = addHex(cursor, forward);
+      }
+      collect(lead.hex.join(','));
+      cursor = addHex(lead.hex, backward);
+      while (cells.has(cursor.join(','))) {
+        collect(cursor.join(','));
+        cursor = addHex(cursor, backward);
+      }
+
       if (chain.length >= 2) {
         chain.forEach((ship, index) => {
           ship.formationLeadId = lead.id;
           ship.formationIndex = index;
         });
+        for (const ship of chain) {
+          ungrouped.delete(ship);
+        }
+      } else {
+        ungrouped.delete(lead);
       }
-      ungrouped.delete(lead);
     }
   }
 }
