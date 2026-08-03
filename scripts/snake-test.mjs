@@ -200,6 +200,9 @@ if (leader2.hex.join(',') !== '-1,0') {
 if (follower2.hex.join(',') !== '-1,0' || follower2.facing !== 5) {
   throw new Error(`follower did not turn at turn cell: ${follower2.hex} ${follower2.facing}`);
 }
+if (follower2.stackTotal !== 2 || follower2.stackIndex !== 1 || leader2.stackIndex !== 0) {
+  throw new Error(`stacking index mismatch: ${leader2.stackIndex}/${leader2.stackTotal} ${follower2.stackIndex}/${follower2.stackTotal}`);
+}
 
 clientA.close();
 clientB.close();
