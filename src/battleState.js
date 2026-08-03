@@ -28,6 +28,7 @@ function makeShip(side, index) {
   return {
     id: `${side === 0 ? 'p' : 'e'}_${index}_${randomBytes(3).toString('hex')}`,
     name: `${side === 0 ? 'Player' : 'Enemy'} Ship ${index + 1}`,
+    shipId: 'frigate',
     side,
     hex: side === 0 ? [2 - index, 0] : [-2 + index, 0],
     facing: side === 0 ? 0 : 3,
@@ -82,6 +83,7 @@ function loadMapShips(db, roomId) {
         ships.push({
           id: `${side === 0 ? 'p' : 'e'}_${index}_${key.replace(',', '_')}`,
           name: `${side === 0 ? 'Player' : 'Enemy'} ${shipId} ${index + 1}`,
+          shipId,
           side,
           hex: [q, r],
           facing,
