@@ -27,6 +27,8 @@ function publicUser(user) {
     email: user.email,
     role: user.role || 'user',
     banned: Boolean(user.banned),
+    nickname: user.nickname || user.username,
+    avatar: user.avatar || '',
     credits: user.credits,
     createdAt: user.created_at,
   };
@@ -49,6 +51,21 @@ export function createAccountService({ db, passwordlessLogin = false }) {
   const updateLastSeen = db.prepare('UPDATE sessions SET last_seen_at = ? WHERE token = ?');
   const updateUserPassword = db.prepare('UPDATE users SET password_hash = ? WHERE id = ?');
   const updateUserRole = db.prepare('UPDATE users SET role = ? WHERE id = ?');
+  const updateProfile = db.prepare(
+    'UPDATE users SET nickname = COALESCE(?, nickname), avatar = COALESCE(?, avatar) WHERE id = ?',
+  );
+  const countItems = db.prepare('SELECT COUNT(*) AS count FROM items WHERE user_id = ?');
+  const countUnreadMail = db.prepare(
+    'SELECT COUNT(*) AS count FROM mails WHERE user_id = ? AND is_read = 0',
+  );
+
+  function publicUserWithStats(user) {
+    return {
+      ...publicUser(user),
+      itemCount: countItems.get(user.id).count,
+      unreadMail: countUnreadMail.get(user.id).count,
+    };
+  }
 
   function resolveToken(token) {
     if (!token) {
@@ -176,10 +193,24 @@ export function createAccountService({ db, passwordlessLogin = false }) {
       return { ok: true };
     },
 
+    updateProfile(token, { nickname, avatar } = {}) {
+      const user = resolveToken(token);
+      const trimmedNickname = typeof nickname === 'string' ? nickname.trim() : null;
+      const trimmedAvatar = typeof avatar === 'string' ? avatar.trim() : null;
+      if (trimmedNickname != null && (trimmedNickname.length < 2 || trimmedNickname.length > 16)) {
+        throw httpError(400, 'invalid_nickname');
+      }
+      if (trimmedAvatar != null && trimmedAvatar.length > 64) {
+        throw httpError(400, 'invalid_avatar');
+      }
+      updateProfile.run(trimmedNickname, trimmedAvatar, user.id);
+      return publicUserWithStats(selectUserById.get(user.id));
+    },
+
     resolveToken,
 
     getUser(token) {
-      return publicUser(resolveToken(token));
+      return publicUserWithStats(resolveToken(token));
     },
 
     getUserById(userId) {

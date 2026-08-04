@@ -28,7 +28,7 @@ function drawItem(pool) {
   return pool.items[pool.items.length - 1];
 }
 
-export function createGachaService({ db, accountService }) {
+export function createGachaService({ db, accountService, inventoryService }) {
   const rateLimitMs = Number(process.env.GACHA_RATE_LIMIT_MS || 300);
   const lastPullAt = new Map();
   const selectCredits = db.prepare('SELECT credits FROM users WHERE id = ?');
@@ -101,6 +101,9 @@ export function createGachaService({ db, accountService }) {
           throw httpError(402, 'insufficient_credits');
         }
         updateCredits.run(credits - cost, user.id);
+        for (const item of items) {
+          inventoryService.grantItem(user.id, 'ship', item.id, 1);
+        }
         insertPull.run(
           pullId,
           user.id,

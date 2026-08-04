@@ -5,9 +5,11 @@ import { createAccountService } from './account.js';
 import { createAdminService } from './admin.js';
 import { createBattleService } from './battle.js';
 import { createBattleStateService } from './battleState.js';
+import { createContentService } from './content.js';
 import { loadConfig } from './config.js';
 import { createDatabase } from './db.js';
 import { createGachaService } from './gacha.js';
+import { createInventoryService } from './inventory.js';
 import { createLobbyService } from './lobby.js';
 import { createRealtimeHub } from './realtime.js';
 
@@ -20,10 +22,12 @@ const accountService = createAccountService({
     (config.DEV_PASSWORDLESS_LOGIN ?? process.env.DEV_PASSWORDLESS_LOGIN) === 'true',
 });
 const adminService = createAdminService({ db, accountService });
+const inventoryService = createInventoryService({ db });
+const contentService = createContentService({ db, accountService, inventoryService });
 const lobbyService = createLobbyService({ db, accountService });
 const battleService = createBattleService({ db, accountService, lobbyService });
 const battleStateService = createBattleStateService({ db, accountService, battleService });
-const gachaService = createGachaService({ db, accountService });
+const gachaService = createGachaService({ db, accountService, inventoryService });
 accountService.ensureAdmin(
   config.ADMIN_EMAIL ?? process.env.ADMIN_EMAIL,
   config.ADMIN_PASSWORD ?? process.env.ADMIN_PASSWORD,
@@ -87,7 +91,9 @@ async function handleRequest(req, res) {
 
     if (req.method === 'POST' && path === '/api/auth/register') {
       const body = await readJson(req);
-      sendJson(res, 201, accountService.register(body));
+      const auth = accountService.register(body);
+      contentService.welcomeMail(auth.user.id);
+      sendJson(res, 201, auth);
       return;
     }
 
@@ -104,6 +110,44 @@ async function handleRequest(req, res) {
 
     if (req.method === 'GET' && path === '/api/me') {
       sendJson(res, 200, accountService.getUser(bearerToken(req)));
+      return;
+    }
+
+    if (req.method === 'PATCH' && path === '/api/me/profile') {
+      const body = await readJson(req);
+      sendJson(res, 200, accountService.updateProfile(bearerToken(req), body));
+      return;
+    }
+
+    if (req.method === 'GET' && path === '/api/backpack') {
+      sendJson(res, 200, { items: contentService.backpack(bearerToken(req)) });
+      return;
+    }
+
+    if (req.method === 'GET' && path === '/api/shop') {
+      sendJson(res, 200, { items: contentService.shopCatalog() });
+      return;
+    }
+
+    if (req.method === 'POST' && path === '/api/shop/buy') {
+      const body = await readJson(req);
+      sendJson(res, 200, contentService.shopBuy(bearerToken(req), body.itemId));
+      return;
+    }
+
+    if (req.method === 'GET' && path === '/api/mail') {
+      sendJson(res, 200, { mails: contentService.mailList(bearerToken(req)) });
+      return;
+    }
+
+    const mailMatch = path.match(/^\/api\/mail\/([^/]+)\/(read|claim)$/);
+    if (req.method === 'POST' && mailMatch) {
+      const mailId = decodeURIComponent(mailMatch[1]);
+      const action = mailMatch[2];
+      const result = action === 'read'
+        ? contentService.mailRead(bearerToken(req), mailId)
+        : contentService.mailClaim(bearerToken(req), mailId);
+      sendJson(res, 200, result);
       return;
     }
 

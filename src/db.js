@@ -12,6 +12,8 @@ CREATE TABLE IF NOT EXISTS users (
   credits INTEGER NOT NULL DEFAULT 1000,
   role TEXT NOT NULL DEFAULT 'user',
   banned INTEGER NOT NULL DEFAULT 0,
+  nickname TEXT,
+  avatar TEXT,
   created_at TEXT NOT NULL
 );
 
@@ -65,6 +67,28 @@ CREATE TABLE IF NOT EXISTS gacha_pulls (
   idempotency_key TEXT NOT NULL UNIQUE,
   created_at TEXT NOT NULL
 );
+
+CREATE TABLE IF NOT EXISTS items (
+  id TEXT PRIMARY KEY,
+  user_id TEXT NOT NULL REFERENCES users(id),
+  item_type TEXT NOT NULL,
+  item_id TEXT NOT NULL,
+  quantity INTEGER NOT NULL DEFAULT 1,
+  created_at TEXT NOT NULL,
+  UNIQUE(user_id, item_type, item_id)
+);
+
+CREATE TABLE IF NOT EXISTS mails (
+  id TEXT PRIMARY KEY,
+  user_id TEXT NOT NULL REFERENCES users(id),
+  title TEXT NOT NULL,
+  body TEXT NOT NULL,
+  sender TEXT NOT NULL DEFAULT '系统',
+  attachments_json TEXT NOT NULL DEFAULT '[]',
+  is_read INTEGER NOT NULL DEFAULT 0,
+  claimed INTEGER NOT NULL DEFAULT 0,
+  created_at TEXT NOT NULL
+);
 `;
 
 export function createDatabase(dbPath = process.env.DATABASE_PATH || 'data/dreadnought.db') {
@@ -86,6 +110,12 @@ export function createDatabase(dbPath = process.env.DATABASE_PATH || 'data/dread
   }
   if (!userColumns.some((column) => column.name === 'banned')) {
     db.exec('ALTER TABLE users ADD COLUMN banned INTEGER NOT NULL DEFAULT 0');
+  }
+  if (!userColumns.some((column) => column.name === 'nickname')) {
+    db.exec('ALTER TABLE users ADD COLUMN nickname TEXT');
+  }
+  if (!userColumns.some((column) => column.name === 'avatar')) {
+    db.exec('ALTER TABLE users ADD COLUMN avatar TEXT');
   }
   const sessionColumns = db.prepare('PRAGMA table_info(sessions)').all();
   if (!sessionColumns.some((column) => column.name === 'last_seen_at')) {

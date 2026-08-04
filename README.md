@@ -55,6 +55,9 @@ sent as `battle.roll` and broadcast to every subscriber in the battle room.
 - `POST /api/lobby/leave`
 - `POST /api/battle/start`, `POST /api/battle/roll`
 - `GET /api/gacha/pools`, `POST /api/gacha/pull`, `GET /api/gacha/history`
+- `PATCH /api/me/profile`, `GET /api/backpack`
+- `GET /api/shop`, `POST /api/shop/buy`
+- `GET /api/mail`, `POST /api/mail/:id/read`, `POST /api/mail/:id/claim`
 
 Full wire details live in [`docs/protocol.md`](docs/protocol.md).
 

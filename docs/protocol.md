@@ -52,6 +52,23 @@ Admin endpoints all require an `admin` role:
 | GET | `/api/admin/rolls` | Recent dice roll log |
 | GET | `/api/admin/gacha` | Recent gacha pull log |
 
+## Player content
+
+Authenticated content endpoints:
+
+| Method | Path | Description |
+| --- | --- | --- |
+| PATCH | `/api/me/profile` | Update nickname / avatar |
+| GET | `/api/backpack` | List inventory items |
+| GET | `/api/shop` | Shop catalog |
+| POST | `/api/shop/buy` | Buy an item with credits |
+| GET | `/api/mail` | List mail |
+| POST | `/api/mail/:id/read` | Mark mail read |
+| POST | `/api/mail/:id/claim` | Claim mail attachments into inventory |
+
+Gacha pulls are also written into the backpack as `ship` items. New accounts
+receive a welcome mail with a starter destroyer attachment.
+
 ## HTTP endpoints
 
 | Method | Path | Description |

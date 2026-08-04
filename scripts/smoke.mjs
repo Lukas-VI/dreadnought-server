@@ -440,6 +440,48 @@ if (replay.id !== pull.id || replay.replay !== true) {
   throw new Error('gacha idempotency replay failed');
 }
 const history = await request('/api/gacha/history', { token: a.token });
+if (me.unreadMail < 1) {
+  throw new Error('welcome mail missing');
+}
+const profile = await request('/api/me/profile', {
+  method: 'PATCH',
+  token: a.token,
+  body: { nickname: 'SmokeAdmiral' },
+});
+if (profile.nickname !== 'SmokeAdmiral') {
+  throw new Error('nickname update failed');
+}
+const mail = await request('/api/mail', { token: a.token });
+const welcome = mail.mails.find((entry) => entry.title.includes('欢迎'));
+if (!welcome) {
+  throw new Error('welcome mail missing');
+}
+await request(`/api/mail/${welcome.id}/claim`, { method: 'POST', token: a.token });
+const backpack = await request('/api/backpack', { token: a.token });
+if (!backpack.items.some((entry) => entry.item_type === 'ship' && entry.item_id === 'nicholas')) {
+  throw new Error('mail attachment not granted');
+}
+for (const item of pull.items) {
+  if (!backpack.items.some((entry) => entry.item_type === 'ship' && entry.item_id === item.id)) {
+    throw new Error(`gacha item not granted: ${item.id}`);
+  }
+}
+const shop = await request('/api/shop', { token: a.token });
+const fuel = shop.items.find((entry) => entry.id === 'fuel_pack');
+if (!fuel) {
+  throw new Error('shop catalog missing');
+}
+const buy = await request('/api/shop/buy', {
+  method: 'POST',
+  token: a.token,
+  body: { itemId: 'fuel_pack' },
+});
+const backpackAfterBuy = await request('/api/backpack', { token: a.token });
+if (!backpackAfterBuy.items.some(
+  (entry) => entry.item_type === 'consumable' && entry.item_id === 'fuel_pack' && entry.quantity >= 5,
+)) {
+  throw new Error('shop item not granted');
+}
 
 console.log(
   JSON.stringify(
